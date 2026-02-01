@@ -78,22 +78,31 @@ class _GetStartedPageState extends State<GetStartedPage> {
   // ===================== MAIN CONTROLLER =====================
  Future<bool> _handleGetStarted(BuildContext context) async 
  {
-    // Request location permission FIRST
-    final locationStatus = await Permission.location.request();
+    // 1️⃣ Check location permission
+    PermissionStatus locationStatus = await Permission.location.status;
+
+    if (locationStatus.isDenied) {
+      locationStatus = await Permission.location.request();
+    }
+
+    if (locationStatus.isPermanentlyDenied) {
+      openAppSettings();
+      return false;
+    }
 
     if (!locationStatus.isGranted) {
       _showLocationPermissionDialog(context);
       return false;
     }
 
-    // Check if GPS is ON
+    // 2️⃣ Check GPS (Location Services)
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       await Geolocator.openLocationSettings();
       return false;
     }
 
-    // Check DND permission
+    // 3️⃣ Check DND permission
     final dndGranted = await Permission.accessNotificationPolicy.isGranted;
     if (!dndGranted) {
       _showDndPermissionDialog(context);
