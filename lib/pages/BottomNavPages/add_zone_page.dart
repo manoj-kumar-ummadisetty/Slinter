@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -14,6 +16,7 @@ class AddZonePage extends StatefulWidget {
     super.key,
     required this.userName,
   });
+  
 
   @override
   State<AddZonePage> createState() => _AddZonePageState();
@@ -22,9 +25,13 @@ class AddZonePage extends StatefulWidget {
 class _AddZonePageState extends State<AddZonePage>
 with TickerProviderStateMixin
 {
+  bool _isLocating = false; // ✅ ADD THIS
+  Timer? _sliderTimer;
+
   bool _isSliderScheduled = false;
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
+  
 
   List<Marker> markers = [];
 
@@ -339,15 +346,45 @@ with TickerProviderStateMixin
 
   Future<void> _goToCurrentLocation() async 
   {
+  if (_isLocating) return; // prevent multiple taps
+  _isLocating = true;
+
+  try {
+    // 1️⃣ Location services
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      _showSnack("Please enable location services");
+      return;
+    }
+
+    // 2️⃣ Permission
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      _showSnack("Location permission denied");
+      return;
+    }
+
+    // 3️⃣ Try cached location (FAST)
     Position? position = await Geolocator.getLastKnownPosition();
 
+    // 4️⃣ GPS fallback (SLOW)
     position ??= await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.medium,
+      desiredAccuracy: LocationAccuracy.high,
     );
 
+    // 5️⃣ Safety check
+    if (position == null) {
+      _showSnack("Unable to get current location");
+      return;
+    }
+
+    // ✅ SUCCESS
     final latLng = LatLng(position.latitude, position.longitude);
 
-    // 🔥 Smooth pan
     animatedMapMove(latLng, 16);
 
     setState(() {
@@ -368,33 +405,92 @@ with TickerProviderStateMixin
         );
     });
 
-    _fetchPlaceName(position.latitude, position.longitude);
+    final name =
+        await getPlaceName(position.latitude, position.longitude);
 
-    // ⏳ Show slider AFTER 5 seconds
-    _scheduleRadiusSlider();
+    if (!mounted) return;
+    setState(() => placeName = name);
+
+    // ⏱️ SHOW SLIDER AFTER 3 SECONDS
+    _sliderTimer?.cancel();
+    _sliderTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && selectedPoint != null) {
+        showRadiusSlider();
+      }
+    });
+  } catch (e) {
+    _showSnack("Location error occurred");
+  } finally {
+    _isLocating = false;
   }
-  Future<void> _fetchPlaceName(double lat, double lng) async 
+}
+
+
+  void _showSnack(String message) 
   {
-    final newPlace = await getPlaceName(lat, lng);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.black,
+        ),
+      );
+  }
+
+
+  Future<void> _updateMap(Position position) async 
+  {
+    final latLng = LatLng(position.latitude, position.longitude);
+
+    animatedMapMove(latLng, 16);
+
+    setState(() {
+      selectedPoint = latLng;
+      markers
+        ..clear()
+        ..add(
+          Marker(
+            point: latLng,
+            width: 60,
+            height: 60,
+            child: const Icon(
+              Icons.location_on,
+              color: Colors.redAccent,
+              size: 28,
+            ),
+          ),
+        );
+    });
+
+    final name = await getPlaceName(
+      position.latitude,
+      position.longitude,
+    );
 
     if (!mounted) return;
 
-    setState(() => placeName = newPlace);
+    setState(() {
+      placeName = name;
+    });
+
+    showRadiusSlider();
   }
+
   void _scheduleRadiusSlider() 
   {
-    if (_isSliderScheduled) return;
+    _sliderTimer?.cancel(); // cancel previous timer
 
-    _isSliderScheduled = true;
-
-    Future.delayed(const Duration(seconds: 2), () {
-      if (!mounted) return;
-
+    _sliderTimer = Timer(const Duration(seconds: 1), () {
+      if (!mounted || selectedPoint == null) return;
       showRadiusSlider();
-
-      _isSliderScheduled = false;
     });
   }
+
+
+
 
   
   /// Zone details dialog (UNCHANGED)
