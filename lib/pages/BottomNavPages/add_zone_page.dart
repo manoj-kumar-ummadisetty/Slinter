@@ -397,7 +397,6 @@ with TickerProviderStateMixin
   }
 
   
-
   /// Zone details dialog (UNCHANGED)
   void showZoneDetailsPopup() {
     if (!mounted || selectedPoint == null) return;

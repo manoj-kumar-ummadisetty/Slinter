@@ -214,88 +214,86 @@ class MyBottomNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Flexible(
-      child: Container(
-        height: 80,
-        child: Stack(
-          children: [
-            Positioned(
-              top: 17,
-              left: 0,
-              right: 0,
+    return Container(
+      height: 80,
+      child: Stack(
+        children: [
+          Positioned(
+            top: 17,
+            left: 0,
+            right: 0,
+            child: Container(
+              height: 70,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(24),
+                    topRight: Radius.circular(24)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: IconButton(
+                      onPressed: () {
+                        onTap(Menus.home);
+                      },
+                      icon: Icon(Icons.home),
+                      iconSize: 28,
+                      color: currentIndex == Menus.home
+                          ? Colors.orange
+                          : Colors.white,
+                    ),
+                  ),
+                  Spacer(),
+                  Expanded(
+                    child: IconButton(
+                      onPressed: () {
+                        onTap(Menus.favorite);
+                      },
+                      icon: Icon(Icons.favorite),
+                      iconSize: 28,
+                      color: currentIndex == Menus.favorite
+                          ? Colors.orange
+                          : Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: GestureDetector(
+              onTap: () {
+                onTap(Menus.addzone);
+              },
               child: Container(
-                height: 70,
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(24),
-                      topRight: Radius.circular(24)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: IconButton(
-                        onPressed: () {
-                          onTap(Menus.home);
-                        },
-                        icon: Icon(Icons.home),
-                        iconSize: 28,
-                        color: currentIndex == Menus.home
-                            ? Colors.orange
-                            : Colors.white,
-                      ),
-                    ),
-                    Spacer(),
-                    Expanded(
-                      child: IconButton(
-                        onPressed: () {
-                          onTap(Menus.favorite);
-                        },
-                        icon: Icon(Icons.favorite),
-                        iconSize: 28,
-                        color: currentIndex == Menus.favorite
-                            ? Colors.orange
-                            : Colors.white,
-                      ),
-                    ),
+                height: 64,
+                width: 64,
+                decoration: const BoxDecoration(
+                  color: Colors.orangeAccent,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 8,
+                      offset: Offset(0, 4),
+                    )
                   ],
                 ),
-              ),
-            ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: GestureDetector(
-                onTap: () {
-                  onTap(Menus.addzone);
-                },
-                child: Container(
-                  height: 64,
-                  width: 64,
-                  decoration: const BoxDecoration(
-                    color: Colors.orangeAccent,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 8,
-                        offset: Offset(0, 4),
-                      )
-                    ],
-                  ),
-                  child: Icon(
-                    Icons.add,
-                    size: 36,
-                    color: currentIndex == Menus.addzone
-                        ? Colors.black
-                        : Colors.white,
-                  ),
+                child: Icon(
+                  Icons.add,
+                  size: 36,
+                  color: currentIndex == Menus.addzone
+                      ? Colors.black
+                      : Colors.white,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
