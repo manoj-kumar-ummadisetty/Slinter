@@ -4,6 +4,7 @@ import 'package:slinter/pages/BottomNavPages/favorite_page.dart';
 import 'package:slinter/pages/BottomNavPages/silent_zones_page.dart';
 import 'package:slinter/pages/get_started_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:slinter/services/zone_monitor_service.dart';
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -16,20 +17,30 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   late String _userName;
   late List<Widget> pages;
+  late ZoneMonitorService _zoneService;
 
   Menus currentIndex = Menus.home;
 
   @override
-  void initState() {
+  void initState() 
+  {
     super.initState();
-
     _userName = widget.userName;
-
-    pages = [
+    pages = 
+    [
       SilentZonesPage(userName: _userName),
       AddZonePage(userName: _userName),
       FavoritePage(),
     ];
+    _zoneService = ZoneMonitorService();
+    _zoneService.startMonitoring();
+  }
+
+  @override
+  void dispose() 
+  {
+    _zoneService.stopMonitoring();
+    super.dispose();
   }
 
   void _showEditNameDialog() {
