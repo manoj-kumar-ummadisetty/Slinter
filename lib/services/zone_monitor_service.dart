@@ -5,64 +5,82 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class ZoneMonitorService {
-  Timer? _timer;
-  Position? _currentPosition;
-
+  final Map<String, DateTime> _lastTriggerTimes = {};
+  
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
   /// Store previous state of zones
   final Map<String, bool> _zoneStates = {};
 
-  // 🔥 START MONITORING
-  void startMonitoring() {
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) async {
-      await _checkZones();
+  StreamSubscription<Position>? _positionStream;
+
+  void startMonitoring() 
+  {
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+      ),
+    ).listen((Position position) {
+      _checkZonesWithPosition(position);
     });
   }
 
-  void stopMonitoring() {
-    _timer?.cancel();
+ void stopMonitoring() 
+  {
+    _positionStream?.cancel();
   }
 
   // 🔥 CORE LOGIC
-  Future<void> _checkZones() async {
-    _currentPosition = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
-
+  Future<void> _checkZonesWithPosition(Position position) async 
+  {
+    if (position.accuracy > 150) 
+    {
+      return;
+    }
     final box = Hive.box('silentZonesBox');
-    final zones = box.values.toList();
-
-    for (var zone in zones) {
+    for (var zone in box.values) {
       if (!zone['isActive']) continue;
 
       final double zoneLat = zone['latitude'];
       final double zoneLng = zone['longitude'];
       final double radius = zone['radius'];
-      final String zoneName = zone['zoneName']?.toString() ?? "Unnamed Zone";
+      final String zoneName =
+          zone['zoneName']?.toString() ?? "Unnamed Zone";
 
       double distance = _calculateDistance(
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
+        position.latitude,
+        position.longitude,
         zoneLat,
         zoneLng,
       );
 
-      bool isInside = distance <= radius;
-
       bool wasInside = _zoneStates[zoneName] ?? false;
+      bool _canTrigger(String zoneName) 
+      {
+        if (!_lastTriggerTimes.containsKey(zoneName)) return true;
 
-      // 🔥 ENTRY DETECTED
-      if (isInside && !wasInside) {
+        return DateTime.now()
+                .difference(_lastTriggerTimes[zoneName]!)
+                .inSeconds >
+            10;
+      }
+      double exitBuffer = radius * 0.2;
+      bool isInside = distance <= radius;
+      bool isOutside = distance > (radius + exitBuffer);
+
+      if (isInside && !wasInside && _canTrigger(zoneName)) 
+      {
         _zoneStates[zoneName] = true;
+        _lastTriggerTimes[zoneName] = DateTime.now();
         await _setSilentMode();
         _showNotification("Entered $zoneName", "Phone switched to Silent");
       }
-
-      // 🔥 EXIT DETECTED
-      if (!isInside && wasInside) {
+      if (isOutside && wasInside && _canTrigger(zoneName)) 
+      {
         _zoneStates[zoneName] = false;
+        _lastTriggerTimes[zoneName] = DateTime.now();
         await _setRingMode();
         _showNotification("Exited $zoneName", "Phone switched to Ring");
       }
