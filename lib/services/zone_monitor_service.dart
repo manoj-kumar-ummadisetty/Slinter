@@ -5,10 +5,9 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class ZoneMonitorService {
+  final FlutterLocalNotificationsPlugin _notifications;
+  ZoneMonitorService(this._notifications);
   final Map<String, DateTime> _lastTriggerTimes = {};
-  
-  final FlutterLocalNotificationsPlugin _notifications =
-      FlutterLocalNotificationsPlugin();
 
   /// Store previous state of zones
   final Map<String, bool> _zoneStates = {};

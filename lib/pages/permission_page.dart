@@ -3,35 +3,37 @@ import 'package:permission_handler/permission_handler.dart';
 
 class GetStartedPage extends StatelessWidget {
   const GetStartedPage({super.key});
+  Future<void> _requestLocationPermission(BuildContext context) async 
+  {
+    PermissionStatus locationStatus = await Permission.locationAlways.request();
 
-  // 🟠 Function to request actual location permission
-  Future<void> _requestLocationPermission(BuildContext context) async {
-    // Check current status
-    PermissionStatus status = await Permission.location.status;
-
-    if (status.isGranted) {
-      // Permission already granted → go to home
-      Navigator.of(context).pushNamed('/home');
-    } else {
-      // Ask user for permission
-      PermissionStatus newStatus = await Permission.location.request();
-
-      if (newStatus.isGranted) {
-        Navigator.of(context).pushNamed('/home');
-      } else if (newStatus.isDenied) {
+    if (!locationStatus.isGranted) {
+      if (locationStatus.isPermanentlyDenied) {
+        openAppSettings();
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("Location permission denied"),
             backgroundColor: Colors.redAccent,
           ),
         );
-      } else if (newStatus.isPermanentlyDenied) {
-        openAppSettings(); // take user to settings
       }
+      return;
     }
-  }
+    PermissionStatus notificationStatus =
+        await Permission.notification.request();
 
-  // 🟠 Dialog before requesting permission
+    if (!notificationStatus.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Notification permission denied"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).pushNamed('/home');
+  }
   void _showLocationPermissionDialog(BuildContext context) {
     showDialog(
       context: context,

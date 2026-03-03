@@ -3,16 +3,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:slinter/pages/username_page.dart';
 import 'package:slinter/pages/get_started_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() async {
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+void main() async 
+{
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔥 Init Hive ONCE
   await Hive.initFlutter();
-
-  // 🔥 Open ALL boxes you use in the app
   await Hive.openBox('silentZonesBox');
-  await Hive.openBox('profile'); // <-- IMPORTANT (userId stored here)
+  await Hive.openBox('profile');
+
+  // 🔥 Initialize notifications
+  const AndroidInitializationSettings androidInitSettings =
+      AndroidInitializationSettings('@drawable/ic_notification');
+
+  const InitializationSettings initSettings =
+      InitializationSettings(android: androidInitSettings);
+
+  await flutterLocalNotificationsPlugin.initialize(
+      settings: initSettings,
+    );
 
   final prefs = await SharedPreferences.getInstance();
   final String? userName = prefs.getString('userName');

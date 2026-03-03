@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:slinter/main.dart';
 import 'package:slinter/pages/BottomNavPages/add_zone_page.dart';
 import 'package:slinter/pages/BottomNavPages/favorite_page.dart';
 import 'package:slinter/pages/BottomNavPages/silent_zones_page.dart';
@@ -32,7 +33,7 @@ class _HomePageState extends State<HomePage> {
       AddZonePage(userName: _userName),
       FavoritePage(),
     ];
-    _zoneService = ZoneMonitorService();
+    _zoneService = ZoneMonitorService(flutterLocalNotificationsPlugin);
     _zoneService.startMonitoring();
   }
 
