@@ -17,9 +17,11 @@ class ZoneMonitorService {
   void startMonitoring() 
   {
     _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
+      locationSettings: const LocationSettings
+      (
         accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 5,
+        distanceFilter: 15,
+        timeLimit: null,
       ),
     ).listen((Position position) {
       _checkZonesWithPosition(position);
@@ -31,7 +33,18 @@ class ZoneMonitorService {
     _positionStream?.cancel();
   }
 
-  // 🔥 CORE LOGIC
+  bool _canTrigger(String zoneKey)
+  {
+    if (!_lastTriggerTimes.containsKey(zoneKey)) return true;
+
+    return DateTime.now()
+            .difference(_lastTriggerTimes[zoneKey]!)
+            .inSeconds > 10;
+  }
+  
+
+
+
   Future<void> _checkZonesWithPosition(Position position) async 
   {
     if (position.accuracy > 150) 
@@ -39,12 +52,17 @@ class ZoneMonitorService {
       return;
     }
     final box = Hive.box('silentZonesBox');
-    for (var zone in box.values) {
+    print("Zones count: ${box.length}");
+    print("Zone data: ${box.values}");
+    for (var zone in box.values) 
+    {
       if (!zone['isActive']) continue;
 
       final double zoneLat = zone['latitude'];
       final double zoneLng = zone['longitude'];
       final double radius = zone['radius'];
+      final String zoneKey =
+          "${zone['latitude']}_${zone['longitude']}";
       final String zoneName =
           zone['zoneName']?.toString() ?? "Unnamed Zone";
 
@@ -55,34 +73,27 @@ class ZoneMonitorService {
         zoneLng,
       );
 
-      bool wasInside = _zoneStates[zoneName] ?? false;
-      bool _canTrigger(String zoneName) 
-      {
-        if (!_lastTriggerTimes.containsKey(zoneName)) return true;
-
-        return DateTime.now()
-                .difference(_lastTriggerTimes[zoneName]!)
-                .inSeconds >
-            10;
-      }
+      bool wasInside = _zoneStates[zoneKey] ?? false;
       double exitBuffer = radius * 0.2;
       bool isInside = distance <= radius;
       bool isOutside = distance > (radius + exitBuffer);
 
-      if (isInside && !wasInside && _canTrigger(zoneName)) 
+      if (isInside && !wasInside && _canTrigger(zoneKey))
       {
-        _zoneStates[zoneName] = true;
-        _lastTriggerTimes[zoneName] = DateTime.now();
+        _zoneStates[zoneKey] = true;
+        _lastTriggerTimes[zoneKey] = DateTime.now();
         await _setSilentMode();
         _showNotification("Entered $zoneName", "Phone switched to Silent");
       }
-      if (isOutside && wasInside && _canTrigger(zoneName)) 
+      if (isOutside && wasInside && _canTrigger(zoneKey)) 
       {
-        _zoneStates[zoneName] = false;
-        _lastTriggerTimes[zoneName] = DateTime.now();
+        _zoneStates[zoneKey] = false;
+        _lastTriggerTimes[zoneKey] = DateTime.now();
         await _setRingMode();
         _showNotification("Exited $zoneName", "Phone switched to Ring");
       }
+      print("Current Position: ${position.latitude}, ${position.longitude}");
+      print("Zone: $zoneName Distance: $distance Radius: $radius");
     }
   }
 

@@ -4,6 +4,7 @@ import 'package:slinter/pages/username_page.dart';
 import 'package:slinter/pages/get_started_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:slinter/services/background_service.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -15,6 +16,7 @@ void main() async
   await Hive.initFlutter();
   await Hive.openBox('silentZonesBox');
   await Hive.openBox('profile');
+  await initializeService();
 
   // 🔥 Initialize notifications
   const AndroidInitializationSettings androidInitSettings =
