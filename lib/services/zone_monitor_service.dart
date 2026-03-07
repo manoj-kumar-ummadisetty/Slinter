@@ -14,24 +14,35 @@ class ZoneMonitorService {
 
   StreamSubscription<Position>? _positionStream;
 
-  void startMonitoring() 
-  {
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings
-      (
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 15,
-        timeLimit: null,
-      ),
-    ).listen((Position position) {
+  Timer? _pollingTimer;
+void startMonitoring() 
+{
+  // GPS stream (movement updates)
+  _positionStream = Geolocator.getPositionStream(
+    locationSettings: const LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 15,
+    ),
+  ).listen((Position position) {
+    _checkZonesWithPosition(position);
+  });
+  _pollingTimer = Timer.periodic(const Duration(seconds: 20), (timer) async {
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
       _checkZonesWithPosition(position);
-    });
-  }
+    } catch (e) {
+      print("Location fetch error: $e");
+    }
+  });
+}
 
  void stopMonitoring() 
-  {
-    _positionStream?.cancel();
-  }
+{
+  _positionStream?.cancel();
+  _pollingTimer?.cancel();
+}
 
   bool _canTrigger(String zoneKey)
   {

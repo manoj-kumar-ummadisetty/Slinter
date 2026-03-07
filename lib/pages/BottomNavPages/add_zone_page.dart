@@ -373,6 +373,7 @@ with TickerProviderStateMixin
     // 4️⃣ GPS fallback (SLOW)
     position ??= await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.high,
+      timeLimit: Duration(seconds: 10),
     );
 
     // 5️⃣ Safety check
