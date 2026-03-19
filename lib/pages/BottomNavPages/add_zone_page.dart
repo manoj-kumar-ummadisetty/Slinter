@@ -6,6 +6,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:slinter/pages/home_page.dart';
 import 'package:hive/hive.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 
 class AddZonePage extends StatefulWidget {
@@ -88,17 +90,16 @@ with TickerProviderStateMixin
                     await getPlaceName(latLng.latitude, latLng.longitude);
 
                 if (!mounted) return;
-
                 setState(() => placeName = newPlace);
 
                 showRadiusSlider();
               },
             ),
             children: [
-              TileLayer(
-                urlTemplate:
-                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                userAgentPackageName: 'dev.fleaflet.flutter_map.example',
+              TileLayer
+              (
+                urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                userAgentPackageName: 'com.example.slinter',
               ),
               CircleLayer(
                 circles: selectedPoint == null
@@ -166,47 +167,98 @@ with TickerProviderStateMixin
   }
 
   /// SEARCH LOCATION BY NAME
-  Future<void> _searchLocation(String query) async {
-    try {
-      final locations = await locationFromAddress(query);
-      if (locations.isNotEmpty) {
-        final loc = locations.first;
-        final latLng = LatLng(loc.latitude, loc.longitude);
+ Future<void> _searchLocation(String query) async {
+  try {
+    _showSnack("Searching...");
 
-        animatedMapMove(latLng, 16);
-        setState(() {
-          selectedPoint = latLng;
-          placeName = "Fetching...";
-          markers.clear();
-          markers.add(
-            Marker(
-              point: latLng,
-              height: 80,
-              width: 80,
-              child: const Icon(
-                Icons.location_on,
-                size: 30,
-                color: Colors.red,
-              ),
-            ),
-          );
-        });
-        final newPlace =
-            await getPlaceName(latLng.latitude, latLng.longitude);
+    // 🔥 STEP 1: Normalize query
+    final cleanQuery = query.trim().toLowerCase();
 
-        if (!mounted) return;
+    // 🔥 STEP 2: Get multiple results
+    final locations = await locationFromAddress(
+      "$cleanQuery, Andhra Pradesh, India",
+    );
 
-        setState(() => placeName = newPlace);
-
-        showRadiusSlider();
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Location not found")),
-      );
+    if (locations.isEmpty) {
+      _showSnack("Location not found");
+      return;
     }
-  }
 
+    Location? bestMatch;
+    double bestScore = -1;
+
+    // 🔥 STEP 3: SCORE EACH LOCATION
+    for (var loc in locations.take(5))
+    {
+      try {
+        final placemarks = await placemarkFromCoordinates(
+          loc.latitude,
+          loc.longitude,
+        );
+
+        if (placemarks.isEmpty) continue;
+
+        final place = placemarks.first;
+
+        final locality = (place.locality ?? "").toLowerCase();
+        final subLocality = (place.subLocality ?? "").toLowerCase();
+        final admin = (place.administrativeArea ?? "").toLowerCase();
+
+        double score = 0;
+
+        // 🎯 Exact match (highest priority)
+        if (locality == cleanQuery) score += 100;
+
+        // 🎯 Partial match
+        if (locality.contains(cleanQuery)) score += 60;
+        if (subLocality.contains(cleanQuery)) score += 40;
+
+        // 🎯 State match (extra boost)
+        if (admin.contains("andhra")) score += 20;
+
+        // 🎯 Bonus for closer coordinates (optional tweak)
+        // You can later improve this using user location
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = loc;
+        }
+      } catch (_) {}
+    }
+
+    // 🔥 STEP 4: fallback
+    bestMatch ??= locations.first;
+
+    final latLng = LatLng(bestMatch.latitude, bestMatch.longitude);
+
+    animatedMapMove(latLng, 16);
+
+    setState(() {
+      selectedPoint = latLng;
+      markers.clear();
+      markers.add(
+        Marker(
+          point: latLng,
+          width: 80,
+          height: 80,
+          child: const Icon(Icons.location_on, color: Colors.red),
+        ),
+      );
+    });
+
+    final newPlace =
+        await getPlaceName(latLng.latitude, latLng.longitude);
+
+    if (!mounted) return;
+
+    setState(() => placeName = newPlace);
+
+    showRadiusSlider();
+  } catch (e) {
+    print("SEARCH ERROR: $e");
+    _showSnack("Search failed");
+  }
+}
   /// Reverse geocoding (UNCHANGED)
   Future<String> getPlaceName(double lat, double lng) async {
     try {
@@ -342,88 +394,64 @@ with TickerProviderStateMixin
     controller.forward();
   }
 
-
   Future<void> _goToCurrentLocation() async 
   {
-  if (_isLocating) return; // prevent multiple taps
-  _isLocating = true;
+    if (_isLocating) return;
+    _isLocating = true;
 
-  try {
-    // 1️⃣ Location services
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      _showSnack("Please enable location services");
-      return;
-    }
+    try {
+      _showSnack("Fetching location...");
 
-    // 2️⃣ Permission
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
+      // ✅ Permission
+      LocationPermission permission = await Geolocator.requestPermission();
 
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      _showSnack("Location permission denied");
-      return;
-    }
-
-    // 3️⃣ Try cached location (FAST)
-    Position? position = await Geolocator.getLastKnownPosition();
-
-    // 4️⃣ GPS fallback (SLOW)
-    position ??= await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-      timeLimit: Duration(seconds: 10),
-    );
-
-    // 5️⃣ Safety check
-    if (position == null) {
-      _showSnack("Unable to get current location");
-      return;
-    }
-
-    // ✅ SUCCESS
-    final latLng = LatLng(position.latitude, position.longitude);
-
-    animatedMapMove(latLng, 16);
-
-    setState(() {
-      selectedPoint = latLng;
-      markers
-        ..clear()
-        ..add(
-          Marker(
-            point: latLng,
-            width: 60,
-            height: 60,
-            child: const Icon(
-              Icons.location_on,
-              color: Colors.redAccent,
-              size: 28,
-            ),
-          ),
-        );
-    });
-
-    final name =
-        await getPlaceName(position.latitude, position.longitude);
-
-    if (!mounted) return;
-    setState(() => placeName = name);
-
-    // ⏱️ SHOW SLIDER AFTER 3 SECONDS
-    _sliderTimer?.cancel();
-    _sliderTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && selectedPoint != null) {
-        showRadiusSlider();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _showSnack("Permission denied");
+        return;
       }
-    });
-  } catch (e) {
-    _showSnack("Location error occurred");
-  } finally {
-    _isLocating = false;
+
+      // ✅ Get location (simple & reliable)
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final latLng = LatLng(position.latitude, position.longitude);
+
+      animatedMapMove(latLng, 16);
+
+      setState(() {
+        selectedPoint = latLng;
+        markers
+          ..clear()
+          ..add(
+            Marker(
+              point: latLng,
+              width: 60,
+              height: 60,
+              child: const Icon(Icons.location_on, color: Colors.redAccent),
+            ),
+          );
+      });
+
+      final name =
+          await getPlaceName(position.latitude, position.longitude);
+
+      setState(() => placeName = name);
+
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted && selectedPoint != null) {
+          showRadiusSlider();
+        }
+      });
+
+    } catch (e) {
+      print("LOCATION ERROR: $e");
+      _showSnack("Location error");
+    } finally {
+      _isLocating = false;
+    }
   }
-}
 
 
   void _showSnack(String message) 

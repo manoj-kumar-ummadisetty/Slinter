@@ -1,23 +1,26 @@
+import 'dart:async';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:slinter/services/zone_monitor_service.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive/hive.dart';
+import 'zone_monitor_service.dart';
+import 'package:flutter/widgets.dart';
+import 'package:path_provider/path_provider.dart';
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
 
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
-    'silent_zone_service',
-    'Silent Zone Monitoring',
+    'slinter_channel',
+    'Slinter Background Service',
+    description: 'Monitors silent zones in background',
     importance: Importance.low,
   );
 
-  final FlutterLocalNotificationsPlugin notifications =
-      FlutterLocalNotificationsPlugin();
-
-  await notifications
+  await flutterLocalNotificationsPlugin
       .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>()
       ?.createNotificationChannel(channel);
@@ -26,65 +29,64 @@ Future<void> initializeService() async {
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
       autoStart: true,
+      autoStartOnBoot: true,
       isForegroundMode: true,
-      notificationChannelId: 'silent_zone_service',
-      initialNotificationTitle: 'Silent Zones Active',
-      initialNotificationContent: 'Monitoring your location',
+      notificationChannelId: 'slinter_channel',
+      initialNotificationTitle: 'Slinter Running',
+      initialNotificationContent: 'Monitoring silent zones',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(),
   );
-  if 
-  (!(await service.isRunning())) 
-  {
-    await service.startService();
-  }
+
+  service.startService();
 }
+
 @pragma('vm:entry-point')
-void onStart(ServiceInstance service) async {
+void onStart(ServiceInstance service) async 
+{
+  WidgetsFlutterBinding.ensureInitialized(); // ✅ MUST FIRST
 
-  // 🔥 VERY IMPORTANT
-  await Hive.initFlutter();
-  await Hive.openBox('silentZonesBox');
- LocationPermission permission = await Geolocator.checkPermission();
-  if (permission == LocationPermission.denied) 
-  {
-    permission = await Geolocator.requestPermission();
-  }
-
-  if (service is AndroidServiceInstance) {
-    service.setAsForegroundService();
-  }
-
-  final FlutterLocalNotificationsPlugin notifications =
-      FlutterLocalNotificationsPlugin();
-
+  // ✅ Notifications init
   const AndroidInitializationSettings androidSettings =
       AndroidInitializationSettings('@mipmap/ic_launcher');
 
   const InitializationSettings initSettings =
       InitializationSettings(android: androidSettings);
 
-  await notifications.initialize(settings: initSettings);
-
-  // Debug notification
-  notifications.show(
-    id: 1,
-    title: "Service Started",
-    body: "Monitoring",
-    notificationDetails: const NotificationDetails(
-      android: AndroidNotificationDetails(
-        'silent_zone_service',
-        'Silent Zone Monitoring',
-        importance: Importance.high,
-        priority: Priority.high,
-      ),
-    ),
+  await flutterLocalNotificationsPlugin.initialize
+  (
+   settings:  initSettings,
   );
-  service.on('stopService').listen((event) 
-  {
+
+  // ✅ Create notification channel again
+  const AndroidNotificationChannel channel = AndroidNotificationChannel(
+    'slinter_channel',
+    'Slinter Background Service',
+    description: 'Monitors silent zones in background',
+    importance: Importance.high,
+  );
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+  // ✅ Hive init
+  final dir = await getApplicationDocumentsDirectory();
+  Hive.init(dir.path);
+
+  if (service is AndroidServiceInstance) {
+    service.setAsForegroundService();
+  }
+
+  ZoneMonitorService zoneMonitor =
+      ZoneMonitorService(notifications: flutterLocalNotificationsPlugin);
+
+  await zoneMonitor.startMonitoring();
+
+  service.on('stopService').listen((event) {
+    zoneMonitor.stopMonitoring();
     service.stopSelf();
   });
-  ZoneMonitorService zoneService = ZoneMonitorService(notifications);
-  zoneService.startMonitoring();
 }

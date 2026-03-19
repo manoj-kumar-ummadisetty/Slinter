@@ -1,161 +1,164 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:geolocator/geolocator.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive/hive.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 
 class ZoneMonitorService {
-  final FlutterLocalNotificationsPlugin _notifications;
-  ZoneMonitorService(this._notifications);
+  StreamSubscription<Position>? _positionStream;
+  Timer? _pollingTimer;
+  late Box silentZonesBox;
+
+  bool _insideAnyZone = false;
+  final FlutterLocalNotificationsPlugin notifications;
+
   final Map<String, DateTime> _lastTriggerTimes = {};
 
-  /// Store previous state of zones
-  final Map<String, bool> _zoneStates = {};
+  ZoneMonitorService({required this.notifications});
 
-  StreamSubscription<Position>? _positionStream;
-
-  Timer? _pollingTimer;
-void startMonitoring() 
-{
-  // GPS stream (movement updates)
-  _positionStream = Geolocator.getPositionStream(
-    locationSettings: const LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 15,
-    ),
-  ).listen((Position position) {
-    _checkZonesWithPosition(position);
-  });
-  _pollingTimer = Timer.periodic(const Duration(seconds: 20), (timer) async {
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      _checkZonesWithPosition(position);
-    } catch (e) {
-      print("Location fetch error: $e");
-    }
-  });
-}
-
- void stopMonitoring() 
-{
-  _positionStream?.cancel();
-  _pollingTimer?.cancel();
-}
-
-  bool _canTrigger(String zoneKey)
+  Future<void> initHive() async 
   {
-    if (!_lastTriggerTimes.containsKey(zoneKey)) return true;
-
-    return DateTime.now()
-            .difference(_lastTriggerTimes[zoneKey]!)
-            .inSeconds > 10;
+    silentZonesBox = await Hive.openBox('silentZonesBox');
   }
-  
 
-
-
-  Future<void> _checkZonesWithPosition(Position position) async 
+  Future<void> startMonitoring() async 
   {
-    if (position.accuracy > 150) 
-    {
-      return;
-    }
-    final box = Hive.box('silentZonesBox');
-    print("Zones count: ${box.length}");
-    print("Zone data: ${box.values}");
-    for (var zone in box.values) 
-    {
-      if (!zone['isActive']) continue;
-
-      final double zoneLat = zone['latitude'];
-      final double zoneLng = zone['longitude'];
-      final double radius = zone['radius'];
-      final String zoneKey =
-          "${zone['latitude']}_${zone['longitude']}";
-      final String zoneName =
-          zone['zoneName']?.toString() ?? "Unnamed Zone";
-
-      double distance = _calculateDistance(
-        position.latitude,
-        position.longitude,
-        zoneLat,
-        zoneLng,
-      );
-
-      bool wasInside = _zoneStates[zoneKey] ?? false;
-      double exitBuffer = radius * 0.2;
-      bool isInside = distance <= radius;
-      bool isOutside = distance > (radius + exitBuffer);
-
-      if (isInside && !wasInside && _canTrigger(zoneKey))
-      {
-        _zoneStates[zoneKey] = true;
-        _lastTriggerTimes[zoneKey] = DateTime.now();
-        await _setSilentMode();
-        _showNotification("Entered $zoneName", "Phone switched to Silent");
-      }
-      if (isOutside && wasInside && _canTrigger(zoneKey)) 
-      {
-        _zoneStates[zoneKey] = false;
-        _lastTriggerTimes[zoneKey] = DateTime.now();
-        await _setRingMode();
-        _showNotification("Exited $zoneName", "Phone switched to Ring");
-      }
-      print("Current Position: ${position.latitude}, ${position.longitude}");
-      print("Zone: $zoneName Distance: $distance Radius: $radius");
-    }
+    await initHive();
+    _startLocationStream();
+    _startPollingBackup();
   }
 
-  // 🔥 Distance Calculation (Haversine Formula)
-  double _calculateDistance(
-      double lat1, double lon1, double lat2, double lon2) {
-    const double R = 6371000; // meters
-    double dLat = _degToRad(lat2 - lat1);
-    double dLon = _degToRad(lon2 - lon1);
-
-    double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_degToRad(lat1)) *
-            cos(_degToRad(lat2)) *
-            sin(dLon / 2) *
-            sin(dLon / 2);
-
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return R * c;
+  void stopMonitoring() {
+    _positionStream?.cancel();
+    _pollingTimer?.cancel();
   }
 
-  double _degToRad(double deg) => deg * (pi / 180);
-
-  // 🔕 SET SILENT MODE
-  Future<void> _setSilentMode() async {
-    // You already have DND logic — call it here
-    print("Silent Mode Activated");
-  }
-
-  // 🔔 SET RING MODE
-  Future<void> _setRingMode() async {
-    print("Ring Mode Activated");
-  }
-
-  // 🔔 Notification
-  Future<void> _showNotification(String title, String body) async 
-  {
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-      'zone_channel',
-      'Zone Notifications',
-      importance: Importance.high,
-      priority: Priority.high,
-      icon: '@drawable/ic_notification',
+  void _startLocationStream() {
+    LocationSettings settings = const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10,
     );
 
-    const NotificationDetails notificationDetails =
-        NotificationDetails(android: androidDetails);
+    _positionStream =
+        Geolocator.getPositionStream(locationSettings: settings).listen(
+      (Position position) {
+        _checkZones(position);
+      },
+      onError: (error) {
+        print("Location stream error: $error");
+      },
+    );
+  }
 
-    await _notifications.show(
-      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      title: title,
+  void _startPollingBackup() {
+    _pollingTimer = Timer.periodic(const Duration(seconds: 20), (timer) async {
+      try {
+        Position position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high);
+
+        _checkZones(position);
+      } catch (e) {
+        print("Polling error: $e");
+      }
+    });
+  }
+
+  Future<void> _checkZones(Position position) async 
+  {
+    try {
+      bool currentlyInsideZone = false;
+
+      print("Zones count: ${silentZonesBox.length}");
+      for (var zone in silentZonesBox.values) 
+      {
+        if (zone['isActive'] != true) continue;
+        double distance = Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          zone['latitude'],
+          zone['longitude'],
+        );
+        print("Distance: $distance | Radius: ${zone['radius']}");
+        if (distance <= zone['radius']) {
+          currentlyInsideZone = true;
+        }
+      }
+
+      if (currentlyInsideZone && !_insideAnyZone) {
+        _enterZone();
+      } else if (!currentlyInsideZone && _insideAnyZone) {
+        _exitZone();
+      }
+
+      _insideAnyZone = currentlyInsideZone;
+    } catch (e) {
+      print("Zone checking error: $e");
+    }
+    _showNotification("TEST", "Service is running");
+  }
+
+  void _enterZone() 
+  {
+    if (!_canTrigger("enter")) return;
+
+    _setSilentMode();
+
+    _showNotification(
+      "Entered Silent Zone",
+      "Phone switched to silent mode",
+    );
+  }
+
+  void _exitZone() {
+    if (!_canTrigger("exit")) return;
+
+    _setRingMode();
+
+    _showNotification(
+      "Exited Silent Zone",
+      "Phone switched to ring mode",
+    );
+  }
+
+  bool _canTrigger(String key) {
+    DateTime now = DateTime.now();
+
+    if (_lastTriggerTimes.containsKey(key)) {
+      if (now.difference(_lastTriggerTimes[key]!) <
+          const Duration(seconds: 20)) {
+        return false;
+      }
+    }
+
+    _lastTriggerTimes[key] = now;
+    return true;
+  }
+
+  void _setSilentMode() {
+    print("Silent mode activated");
+    // integrate sound_mode package here
+  }
+
+  void _setRingMode() {
+    print("Ring mode activated");
+    // integrate sound_mode package here
+  }
+
+  Future<void> _showNotification(String title, String body) async {
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
+    'slinter_channel',
+    'Slinter Background Service',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const NotificationDetails notificationDetails =
+    NotificationDetails(android: androidDetails);
+    await notifications.show(
+      id:Random().nextInt(100000),
+      title:title,
       body: body,
       notificationDetails: notificationDetails,
     );

@@ -18,7 +18,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   late String _userName;
   late List<Widget> pages;
-  late ZoneMonitorService _zoneService;
 
   Menus currentIndex = Menus.home;
 
@@ -33,14 +32,11 @@ class _HomePageState extends State<HomePage> {
       AddZonePage(userName: _userName),
       FavoritePage(),
     ];
-    _zoneService = ZoneMonitorService(flutterLocalNotificationsPlugin);
-    _zoneService.startMonitoring();
   }
 
   @override
   void dispose() 
   {
-    _zoneService.stopMonitoring();
     super.dispose();
   }
 
