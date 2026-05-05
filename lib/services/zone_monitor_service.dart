@@ -1,166 +1,230 @@
 import 'dart:async';
 import 'dart:math';
+
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hive/hive.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:sound_mode/sound_mode.dart';
+import 'package:sound_mode/utils/ringer_mode_statuses.dart';
+import 'package:vibration/vibration.dart';
 
 class ZoneMonitorService {
-  StreamSubscription<Position>? _positionStream;
-  Timer? _pollingTimer;
-  late Box silentZonesBox;
-
-  bool _insideAnyZone = false;
-  final FlutterLocalNotificationsPlugin notifications;
-
+  final ServiceInstance service;
+  final FlutterLocalNotificationsPlugin _notifications =
+      FlutterLocalNotificationsPlugin();
   final Map<String, DateTime> _lastTriggerTimes = {};
 
-  ZoneMonitorService({required this.notifications});
+  StreamSubscription<Position>? _positionStream;
+  late Box silentZonesBox;
+  String? _currentZoneName;
+  DateTime? _lastCheckTime;
+  bool _notificationsReady = false;
 
-  Future<void> initHive() async 
-  {
-    silentZonesBox = await Hive.openBox('silentZonesBox');
+  ZoneMonitorService({required this.service});
+
+  Future<void> initHive() async {
+    if (!Hive.isBoxOpen('silentZonesBox')) {
+      silentZonesBox = await Hive.openBox('silentZonesBox');
+    } else {
+      silentZonesBox = Hive.box('silentZonesBox');
+    }
   }
 
-  Future<void> startMonitoring() async 
-  {
+  Future<void> startMonitoring() async {
     await initHive();
+    await _initNotifications();
+    _lastTriggerTimes.clear();
+
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+
     _startLocationStream();
-    _startPollingBackup();
   }
 
   void stopMonitoring() {
     _positionStream?.cancel();
-    _pollingTimer?.cancel();
   }
 
-  void _startLocationStream() {
-    LocationSettings settings = const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
+  Future<void> _initNotifications() async {
+    if (_notificationsReady) return;
+
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const initSettings = InitializationSettings(android: androidSettings);
+
+    await _notifications.initialize(settings: initSettings);
+
+    const channel = AndroidNotificationChannel(
+      'slinter_channel',
+      'Slinter Background Service',
+      description: 'Monitors silent zones in background',
+      importance: Importance.high,
     );
 
-    _positionStream =
-        Geolocator.getPositionStream(locationSettings: settings).listen(
-      (Position position) {
-        _checkZones(position);
-      },
-      onError: (error) {
-        print("Location stream error: $error");
-      },
-    );
+    await _notifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(channel);
+
+    _notificationsReady = true;
   }
 
-  void _startPollingBackup() {
-    _pollingTimer = Timer.periodic(const Duration(seconds: 20), (timer) async {
-      try {
-        Position position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high);
+  void _startLocationStream() async {
+    _positionStream?.cancel();
 
-        _checkZones(position);
-      } catch (e) {
-        print("Polling error: $e");
-      }
-    });
-  }
-
-  Future<void> _checkZones(Position position) async 
-  {
     try {
-      bool currentlyInsideZone = false;
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
 
-      print("Zones count: ${silentZonesBox.length}");
-      for (var zone in silentZonesBox.values) 
-      {
-        if (zone['isActive'] != true) continue;
-        double distance = Geolocator.distanceBetween(
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition();
+      await _checkZones(position);
+
+      _positionStream =
+          Geolocator.getPositionStream(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              distanceFilter: 20,
+            ),
+          ).listen(
+            (position) async {
+              await _checkZones(position);
+            },
+            onError: (_) {
+              _positionStream?.cancel();
+              Future.delayed(const Duration(seconds: 5), _startLocationStream);
+            },
+          );
+    } catch (_) {
+      Future.delayed(const Duration(seconds: 10), _startLocationStream);
+    }
+  }
+
+  Future<void> _checkZones(Position position) async {
+    if (_lastCheckTime != null &&
+        DateTime.now().difference(_lastCheckTime!) <
+            const Duration(seconds: 8)) {
+      return;
+    }
+
+    _lastCheckTime = DateTime.now();
+
+    try {
+      var currentlyInsideZone = false;
+      String? detectedZoneName;
+
+      for (final zone in silentZonesBox.values) {
+        if (zone is! Map || zone['isActive'] != true) continue;
+
+        final latitude = zone['latitude'];
+        final longitude = zone['longitude'];
+        final radius = zone['radius'];
+
+        if (latitude is! num || longitude is! num || radius is! num) continue;
+
+        final distance = Geolocator.distanceBetween(
           position.latitude,
           position.longitude,
-          zone['latitude'],
-          zone['longitude'],
+          latitude.toDouble(),
+          longitude.toDouble(),
         );
-        print("Distance: $distance | Radius: ${zone['radius']}");
-        if (distance <= zone['radius']) {
+
+        if (distance <= radius.toDouble()) {
           currentlyInsideZone = true;
+          detectedZoneName = (zone['zoneName'] ?? 'Silent Zone').toString();
+          break;
         }
       }
 
-      if (currentlyInsideZone && !_insideAnyZone) {
-        _enterZone();
-      } else if (!currentlyInsideZone && _insideAnyZone) {
-        _exitZone();
+      if (currentlyInsideZone && _currentZoneName != detectedZoneName) {
+        _currentZoneName = detectedZoneName;
+        await _enterZone(_currentZoneName!);
+      } else if (!currentlyInsideZone && _currentZoneName != null) {
+        await _exitZone(_currentZoneName!);
+        _currentZoneName = null;
       }
-
-      _insideAnyZone = currentlyInsideZone;
-    } catch (e) {
-      print("Zone checking error: $e");
+    } catch (_) {
+      // Keep monitoring alive even if one saved zone has invalid data.
     }
-    _showNotification("TEST", "Service is running");
   }
 
-  void _enterZone() 
-  {
-    if (!_canTrigger("enter")) return;
+  Future<void> _enterZone(String zoneName) async {
+    if (!_canTrigger('enter_$zoneName')) return;
 
-    _setSilentMode();
+    await _showZoneNotification(
+      title: 'Entered $zoneName',
+      body: 'Phone switched to silent mode',
+    );
+    await _vibrateIfAvailable();
+    await SoundMode.setSoundMode(RingerModeStatus.silent);
 
-    _showNotification(
-      "Entered Silent Zone",
-      "Phone switched to silent mode",
+    service.invoke('zone_entered', {'zoneName': zoneName});
+  }
+
+  Future<void> _exitZone(String zoneName) async {
+    if (!_canTrigger('exit_$zoneName')) return;
+
+    await _showZoneNotification(
+      title: 'Exited $zoneName',
+      body: 'Phone switched back to ring mode',
+    );
+    await _vibrateIfAvailable();
+    await SoundMode.setSoundMode(RingerModeStatus.normal);
+
+    service.invoke('zone_exited', {'zoneName': zoneName});
+  }
+
+  Future<void> _showZoneNotification({
+    required String title,
+    required String body,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      'slinter_channel',
+      'Slinter Background Service',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+
+    await _notifications.show(
+      id: Random().nextInt(100000),
+      title: title,
+      body: body,
+      notificationDetails: const NotificationDetails(android: androidDetails),
     );
   }
 
-  void _exitZone() {
-    if (!_canTrigger("exit")) return;
-
-    _setRingMode();
-
-    _showNotification(
-      "Exited Silent Zone",
-      "Phone switched to ring mode",
-    );
+  Future<void> _vibrateIfAvailable() async {
+    if (await Vibration.hasVibrator() == true) {
+      await Vibration.vibrate(pattern: [0, 500, 200, 500]);
+    }
   }
 
   bool _canTrigger(String key) {
-    DateTime now = DateTime.now();
+    final now = DateTime.now();
+    final lastTriggerTime = _lastTriggerTimes[key];
 
-    if (_lastTriggerTimes.containsKey(key)) {
-      if (now.difference(_lastTriggerTimes[key]!) <
-          const Duration(seconds: 20)) {
-        return false;
-      }
+    if (lastTriggerTime != null &&
+        now.difference(lastTriggerTime) < const Duration(seconds: 20)) {
+      return false;
     }
 
     _lastTriggerTimes[key] = now;
     return true;
-  }
-
-  void _setSilentMode() {
-    print("Silent mode activated");
-    // integrate sound_mode package here
-  }
-
-  void _setRingMode() {
-    print("Ring mode activated");
-    // integrate sound_mode package here
-  }
-
-  Future<void> _showNotification(String title, String body) async {
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-    'slinter_channel',
-    'Slinter Background Service',
-      importance: Importance.high,
-      priority: Priority.high,
-    );
-    const NotificationDetails notificationDetails =
-    NotificationDetails(android: androidDetails);
-    await notifications.show(
-      id:Random().nextInt(100000),
-      title:title,
-      body: body,
-      notificationDetails: notificationDetails,
-    );
   }
 }

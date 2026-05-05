@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:hive/hive.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:slinter/components/status_bar.dart';
 import 'package:slinter/pages/home_page.dart';
+import 'package:slinter/services/background_service.dart';
 import 'package:sound_mode/sound_mode.dart';
 import 'package:sound_mode/utils/ringer_mode_statuses.dart';
 
@@ -28,9 +30,9 @@ class _GetStartedPageState extends State<GetStartedPage> {
   String _ringerStatus = "Checking...";
   Color _statusColor = Colors.orangeAccent;
   Timer? _timer;
+  DateTime? _lastBackPressed;
 
   @override
-  DateTime? _lastBackPressed;
   void initState() {
     super.initState();
     _startRingerStatusPolling();
@@ -75,34 +77,50 @@ class _GetStartedPageState extends State<GetStartedPage> {
     }
   }
 
+  bool _hasActiveZones() {
+    final box = Hive.box('silentZonesBox');
+
+    return box.values.any((zone) {
+      return zone is Map && zone['isActive'] == true;
+    });
+  }
+
   // ===================== MAIN CONTROLLER =====================
- Future<bool> _handleGetStarted(BuildContext context) async 
- {
-    // 1️⃣ Check location permission
-    PermissionStatus locationStatus = await Permission.location.status;
-
-    if (locationStatus.isDenied) {
-      locationStatus = await Permission.location.request();
+  Future<bool> _handleGetStarted(BuildContext context) async {
+    // 🔋 Battery optimization
+    if (!await Permission.ignoreBatteryOptimizations.isGranted) {
+      await Permission.ignoreBatteryOptimizations.request();
     }
 
-    if (locationStatus.isPermanentlyDenied) {
-      openAppSettings();
-      return false;
-    }
+    // 📍 Step 1: Foreground location
+    var fgStatus = await Permission.locationWhenInUse.request();
 
-    if (!locationStatus.isGranted) {
+    if (!fgStatus.isGranted) {
       _showLocationPermissionDialog(context);
       return false;
     }
 
-    // 2️⃣ Check GPS (Location Services)
+    // 📍 Step 2: Background location
+    var bgStatus = await Permission.locationAlways.request();
+
+    if (bgStatus.isPermanentlyDenied) {
+      openAppSettings();
+      return false;
+    }
+
+    if (!bgStatus.isGranted) {
+      _showLocationPermissionDialog(context);
+      return false;
+    }
+
+    // 📡 GPS check
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       await Geolocator.openLocationSettings();
       return false;
     }
 
-    // 3️⃣ Check DND permission
+    // 🔕 DND permission
     final dndGranted = await Permission.accessNotificationPolicy.isGranted;
     if (!dndGranted) {
       _showDndPermissionDialog(context);
@@ -112,7 +130,6 @@ class _GetStartedPageState extends State<GetStartedPage> {
     return true;
   }
 
-
   // ===================== LOCATION DIALOG =====================
   void _showLocationPermissionDialog(BuildContext context) {
     showDialog(
@@ -120,9 +137,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF2C2C2C),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text(
           "Location Required",
           style: TextStyle(
@@ -149,7 +164,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
             ),
             onPressed: () async {
               Navigator.pop(context);
-              final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+              final serviceEnabled =
+                  await Geolocator.isLocationServiceEnabled();
               if (!serviceEnabled) await Geolocator.openLocationSettings();
             },
             child: const Text("Turn ON"),
@@ -166,9 +182,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF2C2C2C),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text(
           "Do Not Disturb Access",
           style: TextStyle(
@@ -183,7 +197,10 @@ class _GetStartedPageState extends State<GetStartedPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+            child: const Text(
+              "Cancel",
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -207,26 +224,26 @@ class _GetStartedPageState extends State<GetStartedPage> {
     final size = MediaQuery.of(context).size;
 
     return BlackStatusBar(
-      child: WillPopScope
-      (
-        onWillPop: () async 
-        {
+      child: WillPopScope(
+        onWillPop: () async {
           final now = DateTime.now();
-      
+
           if (_lastBackPressed == null ||
               now.difference(_lastBackPressed!) > const Duration(seconds: 2)) {
             _lastBackPressed = now;
-      
+
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 backgroundColor: Colors.black,
                 content: Center(
-                  child: Text('Press back again to exit',style: TextStyle
-                  (
-                    color: Colors.orangeAccent,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),),
+                  child: Text(
+                    'Press back again to exit',
+                    style: TextStyle(
+                      color: Colors.orangeAccent,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ),
                 duration: Duration(seconds: 2),
               ),
@@ -235,7 +252,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
           }
           return true; // exits app
         },
-      
+
         child: BlackStatusBar(
           child: Scaffold(
             resizeToAvoidBottomInset: true,
@@ -298,23 +315,29 @@ class _GetStartedPageState extends State<GetStartedPage> {
                           ),
                           const Spacer(),
                           // 🔹 Real-time Sound Status
-                          Row(
+                          Wrap(
                             children: [
                               const Text(
                                 "Currently Your Mobile Is In ",
-                                style: TextStyle(color: Colors.white, fontSize: 15),
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                ),
                               ),
                               Text(
                                 _ringerStatus,
                                 style: TextStyle(
                                   color: _statusColor,
-                                  fontSize: 26,
+                                  fontSize: 22,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                               const Text(
                                 " Mode",
-                                style: TextStyle(color: Colors.white, fontSize: 15),
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                ),
                               ),
                             ],
                           ),
@@ -324,26 +347,37 @@ class _GetStartedPageState extends State<GetStartedPage> {
                             child: ElevatedButton(
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.orangeAccent,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10),
                                 ),
                               ),
                               onPressed: () async {
-                                final canProceed = await _handleGetStarted(context);
-                    
+                                final canProceed = await _handleGetStarted(
+                                  context,
+                                );
+
                                 if (!mounted) return;
-                    
+
                                 if (canProceed) {
+                                  if (_hasActiveZones()) {
+                                    await initializeService();
+                                    await initBackgroundService();
+                                  }
+                                  if (!mounted) return;
+
                                   Navigator.pushReplacement(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => HomePage(userName: widget.userName),
+                                      builder: (_) =>
+                                          HomePage(userName: widget.userName),
                                     ),
                                   );
                                 }
                               },
-                    
+
                               child: const Text(
                                 'Get Started',
                                 style: TextStyle(

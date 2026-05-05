@@ -1,36 +1,42 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:slinter/pages/username_page.dart';
-import 'package:slinter/pages/get_started_page.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:slinter/services/background_service.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:slinter/pages/get_started_page.dart';
+import 'package:slinter/pages/username_page.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-void main() async 
-{
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Hive.initFlutter();
   await Hive.openBox('silentZonesBox');
   await Hive.openBox('profile');
-  await initializeService();
 
-  // 🔥 Initialize notifications
-  const AndroidInitializationSettings androidInitSettings =
-      AndroidInitializationSettings('@drawable/ic_notification');
+  const androidInitSettings = AndroidInitializationSettings(
+    '@mipmap/ic_launcher',
+  );
+  const initSettings = InitializationSettings(android: androidInitSettings);
 
-  const InitializationSettings initSettings =
-      InitializationSettings(android: androidInitSettings);
+  await flutterLocalNotificationsPlugin.initialize(settings: initSettings);
 
-  await flutterLocalNotificationsPlugin.initialize(
-      settings: initSettings,
-    );
+  const channel = AndroidNotificationChannel(
+    'slinter_channel',
+    'Slinter Background Service',
+    description: 'Monitors silent zones in background',
+    importance: Importance.high,
+  );
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >()
+      ?.createNotificationChannel(channel);
 
   final prefs = await SharedPreferences.getInstance();
-  final String? userName = prefs.getString('userName');
+  final userName = prefs.getString('userName');
 
   runApp(MyApp(userName: userName));
 }

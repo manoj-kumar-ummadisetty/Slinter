@@ -1,25 +1,58 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:slinter/services/background_service.dart';
 
-class GetStartedPage extends StatelessWidget {
-  const GetStartedPage({super.key});
+class PermissionPage extends StatelessWidget 
+{
+  const PermissionPage({super.key});
   Future<void> _requestLocationPermission(BuildContext context) async 
   {
-    PermissionStatus locationStatus = await Permission.locationAlways.request();
+    // STEP 1: Foreground location
+    PermissionStatus whenInUse = await Permission.locationWhenInUse.status;
 
-    if (!locationStatus.isGranted) {
-      if (locationStatus.isPermanentlyDenied) {
-        openAppSettings();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Location permission denied"),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
+    if (whenInUse.isDenied) {
+      whenInUse = await Permission.locationWhenInUse.request();
+    }
+
+    if (whenInUse.isPermanentlyDenied) {
+      openAppSettings();
       return;
     }
+
+    if (!whenInUse.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Location permission required"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    // STEP 2: Background location
+    PermissionStatus locationStatus = await Permission.locationAlways.status;
+
+    if (locationStatus.isDenied) {
+      locationStatus = await Permission.locationAlways.request();
+    }
+
+    if (locationStatus.isPermanentlyDenied) {
+      openAppSettings();
+      return;
+    }
+
+    if (!locationStatus.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Background location required"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    // STEP 3: Notification permission
     PermissionStatus notificationStatus =
         await Permission.notification.request();
 
@@ -32,8 +65,28 @@ class GetStartedPage extends StatelessWidget {
       );
       return;
     }
-    Navigator.of(context).pushNamed('/home');
+
+    // STEP 4: Battery optimization
+    PermissionStatus batteryStatus =
+        await Permission.ignoreBatteryOptimizations.request();
+
+    if (!batteryStatus.isGranted) {
+      print("Battery optimization not disabled");
+    }
+
+    // STEP 5: Start service safely
+    final service = FlutterBackgroundService();
+    if (!(await service.isRunning())) {
+      await initializeService();
+    }
+
+    // STEP 6: Navigate
+    if (context.mounted) {
+      Navigator.of(context).pushNamed('/home');
+    }
   }
+
+  
   void _showLocationPermissionDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -78,7 +131,10 @@ class GetStartedPage extends StatelessWidget {
               ),
               onPressed: () {
                 Navigator.of(context).pop();
-                _requestLocationPermission(context);
+                Future.delayed(const Duration(milliseconds: 300), () 
+                {
+                  _requestLocationPermission(context);
+                });
               },
               child: const Text(
                 "Allow",

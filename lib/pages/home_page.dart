@@ -208,7 +208,8 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-enum Menus {
+enum Menus 
+{
   home,
   addzone,
   favorite,

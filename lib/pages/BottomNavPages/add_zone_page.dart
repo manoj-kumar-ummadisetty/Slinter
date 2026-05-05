@@ -5,34 +5,26 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:slinter/pages/home_page.dart';
+import 'package:slinter/services/background_service.dart';
 import 'package:hive/hive.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-
 
 class AddZonePage extends StatefulWidget {
   final String userName;
 
-  const AddZonePage({
-    super.key,
-    required this.userName,
-  });
-  
+  const AddZonePage({super.key, required this.userName});
 
   @override
   State<AddZonePage> createState() => _AddZonePageState();
 }
 
 class _AddZonePageState extends State<AddZonePage>
-with TickerProviderStateMixin
-{
+    with TickerProviderStateMixin {
   bool _isLocating = false; // ✅ ADD THIS
+  bool _isMapReady = false;
   Timer? _sliderTimer;
-
-  bool _isSliderScheduled = false;
+  AnimationController? _mapAnimationController;
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
-  
 
   List<Marker> markers = [];
 
@@ -44,6 +36,8 @@ with TickerProviderStateMixin
   @override
   void dispose() {
     _searchController.dispose();
+    _sliderTimer?.cancel(); // ✅ ADD THIS
+    _mapAnimationController?.dispose();
     super.dispose();
   }
 
@@ -51,8 +45,7 @@ with TickerProviderStateMixin
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 44, 44, 44),
-      floatingActionButton: FloatingActionButton
-      (
+      floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.orangeAccent,
         onPressed: _goToCurrentLocation,
         child: const Icon(Icons.my_location, color: Colors.black),
@@ -67,6 +60,9 @@ with TickerProviderStateMixin
               initialZoom: 15,
               maxZoom: 17,
               minZoom: 3,
+              onMapReady: () {
+                _isMapReady = true;
+              },
               onTap: (tapPosition, latLng) async {
                 setState(() {
                   selectedPoint = latLng;
@@ -86,18 +82,20 @@ with TickerProviderStateMixin
                   );
                 });
 
-                String newPlace =
-                    await getPlaceName(latLng.latitude, latLng.longitude);
-
-                if (!mounted) return;
-                setState(() => placeName = newPlace);
-
+                Future.microtask(() async {
+                  final newPlace = await getPlaceName(
+                    latLng.latitude,
+                    latLng.longitude,
+                  );
+                  if (mounted) {
+                    setState(() => placeName = newPlace);
+                  }
+                });
                 showRadiusSlider();
               },
             ),
             children: [
-              TileLayer
-              (
+              TileLayer(
                 urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                 userAgentPackageName: 'com.example.slinter',
               ),
@@ -112,7 +110,7 @@ with TickerProviderStateMixin
                           color: Colors.orangeAccent.withOpacity(0.3),
                           borderStrokeWidth: 2,
                           borderColor: Colors.orangeAccent,
-                        )
+                        ),
                       ],
               ),
               MarkerLayer(markers: markers),
@@ -128,22 +126,18 @@ with TickerProviderStateMixin
               elevation: 6,
               borderRadius: BorderRadius.circular(12),
               child: TextField(
-                style: TextStyle
-                (
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
+                style: TextStyle(color: Colors.white, fontSize: 16),
                 controller: _searchController,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
                   hintText: "Search location here",
-                  hintStyle: TextStyle
-                  (
-                    color: Colors.white,
+                  hintStyle: TextStyle(color: Colors.white),
+                  prefixIcon: const Icon(
+                    Icons.search,
+                    color: Colors.orangeAccent,
                   ),
-                  prefixIcon: const Icon(Icons.search,color: Colors.orangeAccent,),
                   suffixIcon: IconButton(
-                    icon: const Icon(Icons.clear,color: Colors.white,),
+                    icon: const Icon(Icons.clear, color: Colors.white),
                     onPressed: () => _searchController.clear(),
                   ),
                   filled: true,
@@ -167,107 +161,111 @@ with TickerProviderStateMixin
   }
 
   /// SEARCH LOCATION BY NAME
- Future<void> _searchLocation(String query) async {
-  try {
-    _showSnack("Searching...");
-
-    // 🔥 STEP 1: Normalize query
-    final cleanQuery = query.trim().toLowerCase();
-
-    // 🔥 STEP 2: Get multiple results
-    final locations = await locationFromAddress(
-      "$cleanQuery, Andhra Pradesh, India",
-    );
-
-    if (locations.isEmpty) {
-      _showSnack("Location not found");
-      return;
-    }
-
-    Location? bestMatch;
-    double bestScore = -1;
-
-    // 🔥 STEP 3: SCORE EACH LOCATION
-    for (var loc in locations.take(5))
-    {
-      try {
-        final placemarks = await placemarkFromCoordinates(
-          loc.latitude,
-          loc.longitude,
-        );
-
-        if (placemarks.isEmpty) continue;
-
-        final place = placemarks.first;
-
-        final locality = (place.locality ?? "").toLowerCase();
-        final subLocality = (place.subLocality ?? "").toLowerCase();
-        final admin = (place.administrativeArea ?? "").toLowerCase();
-
-        double score = 0;
-
-        // 🎯 Exact match (highest priority)
-        if (locality == cleanQuery) score += 100;
-
-        // 🎯 Partial match
-        if (locality.contains(cleanQuery)) score += 60;
-        if (subLocality.contains(cleanQuery)) score += 40;
-
-        // 🎯 State match (extra boost)
-        if (admin.contains("andhra")) score += 20;
-
-        // 🎯 Bonus for closer coordinates (optional tweak)
-        // You can later improve this using user location
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestMatch = loc;
-        }
-      } catch (_) {}
-    }
-
-    // 🔥 STEP 4: fallback
-    bestMatch ??= locations.first;
-
-    final latLng = LatLng(bestMatch.latitude, bestMatch.longitude);
-
-    animatedMapMove(latLng, 16);
-
-    setState(() {
-      selectedPoint = latLng;
-      markers.clear();
-      markers.add(
-        Marker(
-          point: latLng,
-          width: 80,
-          height: 80,
-          child: const Icon(Icons.location_on, color: Colors.red),
-        ),
-      );
-    });
-
-    final newPlace =
-        await getPlaceName(latLng.latitude, latLng.longitude);
-
-    if (!mounted) return;
-
-    setState(() => placeName = newPlace);
-
-    showRadiusSlider();
-  } catch (e) {
-    print("SEARCH ERROR: $e");
-    _showSnack("Search failed");
-  }
-}
-  /// Reverse geocoding (UNCHANGED)
-  Future<String> getPlaceName(double lat, double lng) async {
+  Future<void> _searchLocation(String query) async {
     try {
-      List<Placemark> placemarks = await placemarkFromCoordinates(lat, lng);
+      _showSnack("Searching...");
+
+      // 🔥 STEP 1: Normalize query
+      final cleanQuery = query.trim().toLowerCase();
+
+      // 🔥 STEP 2: Get multiple results
+      final locations = await locationFromAddress(cleanQuery);
+
+      if (locations.isEmpty) {
+        _showSnack("Location not found");
+        return;
+      }
+
+      Location? bestMatch;
+      double bestScore = -1;
+
+      // 🔥 STEP 3: SCORE EACH LOCATION
+      for (var loc in locations.take(3)) {
+        try {
+          final placemarks = await placemarkFromCoordinates(
+            loc.latitude,
+            loc.longitude,
+          );
+
+          if (placemarks.isEmpty) continue;
+
+          final place = placemarks.first;
+
+          final locality = (place.locality ?? "").toLowerCase();
+          final subLocality = (place.subLocality ?? "").toLowerCase();
+          double score = 0;
+
+          // 🎯 Exact match (highest priority)
+          if (locality == cleanQuery) score += 100;
+
+          // 🎯 Partial match
+          if (locality.contains(cleanQuery)) score += 60;
+          if (subLocality.contains(cleanQuery)) score += 40;
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = loc;
+          }
+        } catch (_) {}
+      }
+
+      // 🔥 STEP 4: fallback
+      bestMatch ??= locations.first;
+
+      final latLng = LatLng(bestMatch.latitude, bestMatch.longitude);
+
+      safeMapMove(latLng);
+
+      setState(() {
+        selectedPoint = latLng;
+        markers.clear();
+        markers.add(
+          Marker(
+            point: latLng,
+            width: 80,
+            height: 80,
+            child: const Icon(Icons.location_on, color: Colors.red),
+          ),
+        );
+      });
+
+      Future.microtask(() async {
+        final newPlace = await getPlaceName(latLng.latitude, latLng.longitude);
+        if (mounted) {
+          setState(() => placeName = newPlace);
+        }
+      });
+
+      showRadiusSlider();
+    } catch (e) {
+      print("SEARCH ERROR: $e");
+      _showSnack("Search failed");
+    }
+  }
+
+  /// Reverse geocoding (UNCHANGED)
+  Map<String, String> _locationCache = {};
+  Future<String> getPlaceName(double lat, double lng) async {
+    final key = "$lat,$lng";
+
+    // ✅ Return cached result
+    if (_locationCache.containsKey(key)) {
+      return _locationCache[key]!;
+    }
+
+    try {
+      final placemarks = await placemarkFromCoordinates(lat, lng);
 
       if (placemarks.isNotEmpty) {
-        Placemark p = placemarks.first;
-        return "${p.locality}, ${p.administrativeArea}, ${p.country}";
+        final p = placemarks.first;
+        final name = "${p.locality}, ${p.administrativeArea}";
+
+        // ✅ Store in cache
+        _locationCache[key] = name;
+
+        return name;
       }
+
       return "Unknown Location";
     } catch (e) {
       return "Unable to fetch location";
@@ -304,8 +302,7 @@ with TickerProviderStateMixin
                       ),
                     ),
                     Slider(
-                      inactiveColor:
-                          const Color.fromARGB(255, 255, 195, 116),
+                      inactiveColor: const Color.fromARGB(255, 255, 195, 116),
                       activeColor: Colors.orangeAccent,
                       value: tempRadius,
                       min: 50,
@@ -339,7 +336,7 @@ with TickerProviderStateMixin
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                    )
+                    ),
                   ],
                 ),
               );
@@ -350,8 +347,11 @@ with TickerProviderStateMixin
     );
   }
 
-  void animatedMapMove(LatLng dest, double destZoom)
-  {
+  void animatedMapMove(LatLng dest, double destZoom) {
+    if (!_isMapReady || !mounted) return;
+
+    _mapAnimationController?.dispose();
+
     final latTween = Tween<double>(
       begin: _mapController.camera.center.latitude,
       end: dest.latitude,
@@ -371,6 +371,7 @@ with TickerProviderStateMixin
       duration: const Duration(milliseconds: 1200),
       vsync: this,
     );
+    _mapAnimationController = controller;
 
     final animation = CurvedAnimation(
       parent: controller,
@@ -378,6 +379,8 @@ with TickerProviderStateMixin
     );
 
     controller.addListener(() {
+      if (!_isMapReady || !mounted) return;
+
       _mapController.move(
         LatLng(latTween.evaluate(animation), lngTween.evaluate(animation)),
         zoomTween.evaluate(animation),
@@ -388,93 +391,143 @@ with TickerProviderStateMixin
       if (status == AnimationStatus.completed ||
           status == AnimationStatus.dismissed) {
         controller.dispose();
+        if (_mapAnimationController == controller) {
+          _mapAnimationController = null;
+        }
       }
     });
 
     controller.forward();
   }
 
-  Future<void> _goToCurrentLocation() async 
-  {
+  void safeMapMove(LatLng newLatLng) {
+    if (!_isMapReady || !mounted) return;
+
+    if (selectedPoint == null) {
+      animatedMapMove(newLatLng, 16);
+      return;
+    }
+
+    double distance = Geolocator.distanceBetween(
+      selectedPoint!.latitude,
+      selectedPoint!.longitude,
+      newLatLng.latitude,
+      newLatLng.longitude,
+    );
+
+    // ✅ Only move if distance is significant
+    if (distance > 30) {
+      animatedMapMove(newLatLng, 16);
+    }
+  }
+
+  void _jumpMapTo(LatLng latLng) {
+    if (!_isMapReady || !mounted) return;
+
+    _mapAnimationController?.dispose();
+    _mapAnimationController = null;
+    _mapController.move(latLng, 16);
+  }
+
+  void _placeCurrentLocationMarker(LatLng latLng) {
+    if (!mounted) return;
+
+    _jumpMapTo(latLng);
+
+    setState(() {
+      selectedPoint = latLng;
+      markers
+        ..clear()
+        ..add(
+          Marker(
+            point: latLng,
+            width: 60,
+            height: 60,
+            child: const Icon(Icons.location_on, color: Colors.redAccent),
+          ),
+        );
+    });
+
+    Future.microtask(() async {
+      final newPlace = await getPlaceName(latLng.latitude, latLng.longitude);
+      if (mounted && selectedPoint == latLng) {
+        setState(() => placeName = newPlace);
+      }
+    });
+  }
+
+  Future<void> _goToCurrentLocation() async {
     if (_isLocating) return;
     _isLocating = true;
 
     try {
-      _showSnack("Fetching location...");
+      await stopBackgroundService();
 
-      // ✅ Permission
-      LocationPermission permission = await Geolocator.requestPermission();
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        _showSnack("Permission denied");
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        await Geolocator.openLocationSettings();
         return;
       }
 
-      // ✅ Get location (simple & reliable)
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _showSnack("Location permission required");
+        return;
+      }
+
+      var hasPlacedLocation = false;
+
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) {
+        _placeCurrentLocationMarker(LatLng(last.latitude, last.longitude));
+        hasPlacedLocation = true;
+      }
+
+      final current = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 3),
+        ),
       );
 
-      final latLng = LatLng(position.latitude, position.longitude);
+      if (!mounted) return;
 
-      animatedMapMove(latLng, 16);
+      _placeCurrentLocationMarker(LatLng(current.latitude, current.longitude));
+      hasPlacedLocation = true;
 
-      setState(() {
-        selectedPoint = latLng;
-        markers
-          ..clear()
-          ..add(
-            Marker(
-              point: latLng,
-              width: 60,
-              height: 60,
-              child: const Icon(Icons.location_on, color: Colors.redAccent),
-            ),
-          );
-      });
-
-      final name =
-          await getPlaceName(position.latitude, position.longitude);
-
-      setState(() => placeName = name);
-
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted && selectedPoint != null) {
-          showRadiusSlider();
-        }
-      });
-
+      if (hasPlacedLocation) _scheduleRadiusSlider();
+    } on TimeoutException {
+      if (selectedPoint != null) {
+        _scheduleRadiusSlider();
+      } else {
+        _showSnack("Location timeout");
+      }
     } catch (e) {
-      print("LOCATION ERROR: $e");
       _showSnack("Location error");
     } finally {
       _isLocating = false;
     }
   }
 
-
-  void _showSnack(String message) 
-  {
+  void _showSnack(String message) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.black,
-        ),
+        SnackBar(content: Text(message), backgroundColor: Colors.black),
       );
   }
 
-
-  Future<void> _updateMap(Position position) async 
-  {
+  Future<void> _updateMap(Position position) async {
     final latLng = LatLng(position.latitude, position.longitude);
 
-    animatedMapMove(latLng, 16);
-
+    safeMapMove(latLng);
     setState(() {
       selectedPoint = latLng;
       markers
@@ -493,22 +546,16 @@ with TickerProviderStateMixin
         );
     });
 
-    final name = await getPlaceName(
-      position.latitude,
-      position.longitude,
-    );
+    final name = await getPlaceName(position.latitude, position.longitude);
 
     if (!mounted) return;
 
     setState(() {
       placeName = name;
     });
-
-    showRadiusSlider();
   }
 
-  void _scheduleRadiusSlider() 
-  {
+  void _scheduleRadiusSlider() {
     _sliderTimer?.cancel(); // cancel previous timer
 
     _sliderTimer = Timer(const Duration(seconds: 1), () {
@@ -517,10 +564,6 @@ with TickerProviderStateMixin
     });
   }
 
-
-
-
-  
   /// Zone details dialog (UNCHANGED)
   void showZoneDetailsPopup() {
     if (!mounted || selectedPoint == null) return;
@@ -532,8 +575,9 @@ with TickerProviderStateMixin
 
         return AlertDialog(
           backgroundColor: Colors.black87,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
           title: const Text(
             "Zone Details",
             style: TextStyle(color: Colors.orangeAccent),
@@ -550,12 +594,16 @@ with TickerProviderStateMixin
                       labelText: "Enter Zone Name",
                       labelStyle: TextStyle(color: Colors.white),
                       enabledBorder: OutlineInputBorder(
-                        borderSide:
-                            BorderSide(color: Colors.orangeAccent, width: 2),
+                        borderSide: BorderSide(
+                          color: Colors.orangeAccent,
+                          width: 2,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderSide:
-                            BorderSide(color: Colors.orangeAccent, width: 2),
+                        borderSide: BorderSide(
+                          color: Colors.orangeAccent,
+                          width: 2,
+                        ),
                       ),
                     ),
                     onChanged: (value) => tempName = value,
@@ -585,48 +633,49 @@ with TickerProviderStateMixin
           ),
           actions: [
             TextButton(
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.orangeAccent,
-              ),
+              style: TextButton.styleFrom(foregroundColor: Colors.orangeAccent),
               child: const Text("Cancel"),
               onPressed: () => Navigator.pop(context),
             ),
-            ElevatedButton
-            (
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orangeAccent,
-              foregroundColor: Colors.white,
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orangeAccent,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text("Add"),
+              onPressed: () async {
+                if (tempName.trim().isEmpty || selectedPoint == null) return;
+
+                final newZone = {
+                  'zoneName': tempName,
+                  'location': placeName,
+                  'latitude': selectedPoint!.latitude,
+                  'longitude': selectedPoint!.longitude,
+                  'radius': radius,
+                  'isActive': true,
+                  'isFavorite': false,
+                  'userId': Hive.box('profile').get('userId'),
+                };
+
+                final box = Hive.box('silentZonesBox');
+
+                /// 🔥 SAVE PERMANENTLY
+                await box.add(newZone);
+                print(newZone);
+
+                await initializeService();
+                await initBackgroundService();
+                if (!mounted) return;
+
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(
+                    builder: (_) => HomePage(userName: widget.userName),
+                  ),
+                  (route) => false,
+                );
+                // return success
+              },
             ),
-            child: const Text("Add"),
-            onPressed: () async {
-              if (tempName.trim().isEmpty || selectedPoint == null) return;
-        
-              final newZone = {
-                'zoneName': tempName,
-                'location': placeName,
-                'latitude': selectedPoint!.latitude,
-                'longitude': selectedPoint!.longitude,
-                'radius': radius,
-                'isActive': true,
-                'isFavorite': false,
-                'userId': Hive.box('profile').get('userId'),
-              };
-        
-              final box = Hive.box('silentZonesBox');
-        
-              /// 🔥 SAVE PERMANENTLY
-              await box.add(newZone);
-              print(newZone);
-              Navigator.of(context).pushAndRemoveUntil
-              (
-                MaterialPageRoute(
-                  builder: (_) => HomePage(userName: widget.userName),
-                ),
-                (route) => false,
-              );
-        // return success
-            },
-          ),
           ],
         );
       },
