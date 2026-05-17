@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:slinter/pages/home_page.dart';
@@ -21,8 +24,11 @@ class _AddZonePageState extends State<AddZonePage>
     with TickerProviderStateMixin {
   bool _isLocating = false; // ✅ ADD THIS
   bool _isMapReady = false;
+  bool _isLiveTracking = false;
+  bool _hasLiveAddress = false;
   Timer? _sliderTimer;
   AnimationController? _mapAnimationController;
+  StreamSubscription<Position>? _liveLocationSub;
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
 
@@ -34,9 +40,16 @@ class _AddZonePageState extends State<AddZonePage>
   String placeName = "Fetching...";
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(stopBackgroundService);
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     _sliderTimer?.cancel(); // ✅ ADD THIS
+    _liveLocationSub?.cancel();
     _mapAnimationController?.dispose();
     super.dispose();
   }
@@ -64,6 +77,8 @@ class _AddZonePageState extends State<AddZonePage>
                 _isMapReady = true;
               },
               onTap: (tapPosition, latLng) async {
+                _stopLiveLocationStream();
+
                 setState(() {
                   selectedPoint = latLng;
                   placeName = "Fetching...";
@@ -149,6 +164,7 @@ class _AddZonePageState extends State<AddZonePage>
                 ),
                 onSubmitted: (value) {
                   if (value.trim().isNotEmpty) {
+                    _stopLiveLocationStream();
                     _searchLocation(value.trim());
                   }
                 },
@@ -165,61 +181,229 @@ class _AddZonePageState extends State<AddZonePage>
     try {
       _showSnack("Searching...");
 
-      // 🔥 STEP 1: Normalize query
-      final cleanQuery = query.trim().toLowerCase();
-
-      // 🔥 STEP 2: Get multiple results
-      final locations = await locationFromAddress(cleanQuery);
-
-      if (locations.isEmpty) {
-        _showSnack("Location not found");
+      final osmResults = await _searchWithOpenStreetMap(query);
+      if (osmResults.isNotEmpty) {
+        if (osmResults.length == 1) {
+          _applySearchedLocation(
+            latLng: osmResults.first.latLng,
+            locationName: osmResults.first.displayName,
+          );
+        } else {
+          _showSearchResults(osmResults);
+        }
         return;
       }
 
-      Location? bestMatch;
-      double bestScore = -1;
+      _showSnack("Town location not found");
+    } catch (e) {
+      print("SEARCH ERROR: $e");
+      _showSnack("Search failed");
+    }
+  }
 
-      // 🔥 STEP 3: SCORE EACH LOCATION
-      for (var loc in locations.take(3)) {
-        try {
-          final placemarks = await placemarkFromCoordinates(
-            loc.latitude,
-            loc.longitude,
-          );
+  Future<List<_SearchResult>> _searchWithOpenStreetMap(String query) async {
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isEmpty) return [];
 
-          if (placemarks.isEmpty) continue;
+    final anchor = _isMapReady ? _mapController.camera.center : selectedPoint;
+    final queryParams = <String, String>{
+      'format': 'jsonv2',
+      'q': trimmedQuery,
+      'limit': '10',
+      'addressdetails': '1',
+      'countrycodes': 'in',
+      'dedupe': '1',
+    };
 
-          final place = placemarks.first;
+    if (anchor != null) {
+      const delta = 0.7;
+      queryParams['viewbox'] =
+          '${anchor.longitude - delta},${anchor.latitude + delta},'
+          '${anchor.longitude + delta},${anchor.latitude - delta}';
+      queryParams['bounded'] = '0';
+    }
 
-          final locality = (place.locality ?? "").toLowerCase();
-          final subLocality = (place.subLocality ?? "").toLowerCase();
-          double score = 0;
+    final uri = Uri.https(
+      'nominatim.openstreetmap.org',
+      '/search',
+      queryParams,
+    );
 
-          // 🎯 Exact match (highest priority)
-          if (locality == cleanQuery) score += 100;
+    final response = await http
+        .get(
+          uri,
+          headers: const {
+            'User-Agent': 'Slinter/1.0 com.example.slinter',
+            'Accept': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 8));
 
-          // 🎯 Partial match
-          if (locality.contains(cleanQuery)) score += 60;
-          if (subLocality.contains(cleanQuery)) score += 40;
+    if (response.statusCode != 200) return [];
 
-          if (score > bestScore) {
-            bestScore = score;
-            bestMatch = loc;
-          }
-        } catch (_) {}
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List || decoded.isEmpty) return [];
+
+    final queryTokens = trimmedQuery.toLowerCase().split(RegExp(r'\s+'));
+    final results = <_SearchResult>[];
+
+    for (final item in decoded) {
+      if (item is! Map<String, dynamic>) continue;
+
+      final lat = double.tryParse(item['lat']?.toString() ?? '');
+      final lon = double.tryParse(item['lon']?.toString() ?? '');
+      if (lat == null || lon == null) continue;
+
+      final displayName = (item['display_name'] ?? trimmedQuery).toString();
+      final category = (item['category'] ?? item['class'] ?? '')
+          .toString()
+          .toLowerCase();
+      final type = (item['type'] ?? '').toString().toLowerCase();
+      const placeTypes = {
+        'city',
+        'town',
+        'village',
+        'hamlet',
+        'suburb',
+        'neighbourhood',
+        'locality',
+        'quarter',
+      };
+      const amenityTypes = {
+        'college',
+        'university',
+        'school',
+        'hospital',
+        'clinic',
+      };
+      const businessCategories = {'shop', 'office', 'craft'};
+      const businessTypes = {
+        'company',
+        'industrial',
+        'factory',
+        'works',
+        'warehouse',
+      };
+      final isPlace = category == 'place' && placeTypes.contains(type);
+      final isAmenity = category == 'amenity' && amenityTypes.contains(type);
+      final isBusiness =
+          businessCategories.contains(category) || businessTypes.contains(type);
+      final isBuilding = category == 'building' && type != 'residential';
+
+      if (category == 'boundary' || type == 'administrative') continue;
+      if (!isPlace && !isAmenity && !isBusiness && !isBuilding) continue;
+
+      final importance =
+          double.tryParse(item['importance']?.toString() ?? '') ?? 0;
+      final lowerName = displayName.toLowerCase();
+
+      var score = importance * 100;
+      for (final token in queryTokens) {
+        if (token.isNotEmpty && lowerName.contains(token)) score += 15;
       }
 
-      // 🔥 STEP 4: fallback
-      bestMatch ??= locations.first;
+      if (isAmenity || isBusiness || isBuilding) {
+        score += 35;
+      }
+      if (isPlace) {
+        score += 25;
+      }
+      if (type == 'university' || type == 'college' || type == 'hospital') {
+        score += 20;
+      }
 
-      final latLng = LatLng(bestMatch.latitude, bestMatch.longitude);
+      final latLng = LatLng(lat, lon);
+      if (anchor != null) {
+        final distanceKm =
+            Geolocator.distanceBetween(
+              anchor.latitude,
+              anchor.longitude,
+              lat,
+              lon,
+            ) /
+            1000;
+        score += (80 - distanceKm).clamp(-80, 80);
+      }
 
-      safeMapMove(latLng);
+      results.add(
+        _SearchResult(latLng: latLng, displayName: displayName, score: score),
+      );
+    }
 
-      setState(() {
-        selectedPoint = latLng;
-        markers.clear();
-        markers.add(
+    results.sort((a, b) => b.score.compareTo(a.score));
+    return results.take(6).toList();
+  }
+
+  void _showSearchResults(List<_SearchResult> results) {
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.black,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: ListView.separated(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            itemCount: results.length,
+            separatorBuilder: (_, __) =>
+                const Divider(color: Color(0xFF2C2C2C), height: 1),
+            itemBuilder: (context, index) {
+              final result = results[index];
+
+              return ListTile(
+                leading: const Icon(
+                  Icons.location_on,
+                  color: Colors.orangeAccent,
+                ),
+                title: Text(
+                  result.primaryName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  result.secondaryName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _applySearchedLocation(
+                    latLng: result.latLng,
+                    locationName: result.displayName,
+                  );
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void _applySearchedLocation({
+    required LatLng latLng,
+    required String locationName,
+  }) {
+    if (!mounted) return;
+
+    _stopLiveLocationStream();
+    _jumpMapTo(latLng);
+
+    setState(() {
+      selectedPoint = latLng;
+      placeName = locationName;
+      markers
+        ..clear()
+        ..add(
           Marker(
             point: latLng,
             width: 80,
@@ -227,20 +411,9 @@ class _AddZonePageState extends State<AddZonePage>
             child: const Icon(Icons.location_on, color: Colors.red),
           ),
         );
-      });
+    });
 
-      Future.microtask(() async {
-        final newPlace = await getPlaceName(latLng.latitude, latLng.longitude);
-        if (mounted) {
-          setState(() => placeName = newPlace);
-        }
-      });
-
-      showRadiusSlider();
-    } catch (e) {
-      print("SEARCH ERROR: $e");
-      _showSnack("Search failed");
-    }
+    showRadiusSlider();
   }
 
   /// Reverse geocoding (UNCHANGED)
@@ -429,10 +602,16 @@ class _AddZonePageState extends State<AddZonePage>
     _mapController.move(latLng, 16);
   }
 
-  void _placeCurrentLocationMarker(LatLng latLng) {
+  void _placeCurrentLocationMarker(
+    LatLng latLng, {
+    bool moveMap = true,
+    bool updateAddress = false,
+  }) {
     if (!mounted) return;
 
-    _jumpMapTo(latLng);
+    if (moveMap) {
+      _jumpMapTo(latLng);
+    }
 
     setState(() {
       selectedPoint = latLng;
@@ -448,12 +627,92 @@ class _AddZonePageState extends State<AddZonePage>
         );
     });
 
-    Future.microtask(() async {
-      final newPlace = await getPlaceName(latLng.latitude, latLng.longitude);
-      if (mounted && selectedPoint == latLng) {
-        setState(() => placeName = newPlace);
-      }
-    });
+    if (updateAddress) {
+      Future.microtask(() async {
+        final newPlace = await getPlaceName(latLng.latitude, latLng.longitude);
+        if (mounted && selectedPoint == latLng) {
+          setState(() => placeName = newPlace);
+        }
+      });
+    }
+  }
+
+  void _stopLiveLocationStream() {
+    _liveLocationSub?.cancel();
+    _liveLocationSub = null;
+    _isLiveTracking = false;
+    _hasLiveAddress = false;
+  }
+
+  Future<bool> _ensureLocationReady() async {
+    await stopBackgroundService();
+
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      await Geolocator.openLocationSettings();
+      return false;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      _showSnack("Location permission required");
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<void> _startLiveLocationStream() async {
+    if (_isLiveTracking) {
+      if (selectedPoint != null) _jumpMapTo(selectedPoint!);
+      return;
+    }
+
+    if (!await _ensureLocationReady()) return;
+
+    _isLiveTracking = true;
+    _hasLiveAddress = false;
+
+    final last = await Geolocator.getLastKnownPosition();
+    if (last != null) {
+      _placeCurrentLocationMarker(
+        LatLng(last.latitude, last.longitude),
+        updateAddress: true,
+      );
+      _hasLiveAddress = true;
+      _scheduleRadiusSlider();
+    }
+
+    _liveLocationSub?.cancel();
+    _liveLocationSub =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 5,
+          ),
+        ).listen(
+          (position) {
+            final latLng = LatLng(position.latitude, position.longitude);
+            final shouldUpdateAddress = !_hasLiveAddress;
+            _placeCurrentLocationMarker(
+              latLng,
+              updateAddress: shouldUpdateAddress,
+            );
+            if (shouldUpdateAddress) {
+              _hasLiveAddress = true;
+              _scheduleRadiusSlider();
+            }
+          },
+          onError: (_) {
+            _showSnack("Live location stopped");
+            _stopLiveLocationStream();
+          },
+        );
   }
 
   Future<void> _goToCurrentLocation() async {
@@ -461,54 +720,7 @@ class _AddZonePageState extends State<AddZonePage>
     _isLocating = true;
 
     try {
-      await stopBackgroundService();
-
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        await Geolocator.openLocationSettings();
-        return;
-      }
-
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        _showSnack("Location permission required");
-        return;
-      }
-
-      var hasPlacedLocation = false;
-
-      final last = await Geolocator.getLastKnownPosition();
-      if (last != null) {
-        _placeCurrentLocationMarker(LatLng(last.latitude, last.longitude));
-        hasPlacedLocation = true;
-      }
-
-      final current = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 3),
-        ),
-      );
-
-      if (!mounted) return;
-
-      _placeCurrentLocationMarker(LatLng(current.latitude, current.longitude));
-      hasPlacedLocation = true;
-
-      if (hasPlacedLocation) _scheduleRadiusSlider();
-    } on TimeoutException {
-      if (selectedPoint != null) {
-        _scheduleRadiusSlider();
-      } else {
-        _showSnack("Location timeout");
-      }
-    } catch (e) {
-      _showSnack("Location error");
+      await _startLiveLocationStream();
     } finally {
       _isLocating = false;
     }
@@ -680,5 +892,25 @@ class _AddZonePageState extends State<AddZonePage>
         );
       },
     );
+  }
+}
+
+class _SearchResult {
+  final LatLng latLng;
+  final String displayName;
+  final double score;
+
+  const _SearchResult({
+    required this.latLng,
+    required this.displayName,
+    required this.score,
+  });
+
+  String get primaryName => displayName.split(',').first.trim();
+
+  String get secondaryName {
+    final parts = displayName.split(',');
+    if (parts.length <= 1) return displayName;
+    return parts.skip(1).map((part) => part.trim()).join(', ');
   }
 }

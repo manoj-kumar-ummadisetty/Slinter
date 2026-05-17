@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:slinter/main.dart';
 import 'package:slinter/pages/BottomNavPages/add_zone_page.dart';
 import 'package:slinter/pages/BottomNavPages/favorite_page.dart';
 import 'package:slinter/pages/BottomNavPages/silent_zones_page.dart';
 import 'package:slinter/pages/get_started_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:slinter/services/zone_monitor_service.dart';
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -22,12 +20,10 @@ class _HomePageState extends State<HomePage> {
   Menus currentIndex = Menus.home;
 
   @override
-  void initState() 
-  {
+  void initState() {
     super.initState();
     _userName = widget.userName;
-    pages = 
-    [
+    pages = [
       SilentZonesPage(userName: _userName),
       AddZonePage(userName: _userName),
       FavoritePage(),
@@ -35,8 +31,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
-  void dispose() 
-  {
+  void dispose() {
     super.dispose();
   }
 
@@ -47,15 +42,10 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF2C2C2C),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            Text(
-              'Edit Name',
-              style: TextStyle(color: Colors.orangeAccent),
-            ),
+            Text('Edit Name', style: TextStyle(color: Colors.orangeAccent)),
             SizedBox(width: 8),
             Icon(Icons.edit, color: Colors.orangeAccent, size: 22),
           ],
@@ -77,16 +67,17 @@ class _HomePageState extends State<HomePage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.white70)),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white70),
+            ),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.orangeAccent,
               foregroundColor: Colors.white,
             ),
-           onPressed: () async 
-           {
+            onPressed: () async {
               final newName = controller.text.trim();
               if (newName.isNotEmpty) {
                 final prefs = await SharedPreferences.getInstance();
@@ -105,10 +96,38 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _showDrawerSnack(String message) {
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.black),
+      );
+  }
+
+  void _showAboutDialog() {
+    Navigator.pop(context);
+
+    showAboutDialog(
+      context: context,
+      applicationName: 'Slinter',
+      applicationVersion: '1.0.0',
+      applicationIcon: const Icon(
+        Icons.volume_off,
+        color: Colors.orangeAccent,
+        size: 42,
+      ),
+      children: const [
+        Text(
+          'Slinter automatically manages silent zones based on your saved locations.',
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return WillPopScope
-    (
+    return WillPopScope(
       onWillPop: () async {
         Navigator.pushReplacement(
           context,
@@ -144,8 +163,7 @@ class _HomePageState extends State<HomePage> {
                   onPressed: () {
                     Scaffold.of(context).openDrawer();
                   },
-                  icon:
-                      const Icon(Icons.more_vert, color: Colors.white),
+                  icon: const Icon(Icons.more_vert, color: Colors.white),
                 );
               },
             ),
@@ -156,43 +174,67 @@ class _HomePageState extends State<HomePage> {
           backgroundColor: Colors.black87,
           child: SafeArea(
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(height: 46),
-                const Icon(
-                  Icons.person,
-                  color: Colors.orangeAccent,
-                  size: 40,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 34, 20, 18),
+                  child: Column(
+                    children: [
+                      const Icon(
+                        Icons.person,
+                        color: Colors.orangeAccent,
+                        size: 44,
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _userName,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: _showEditNameDialog,
+                            icon: const Icon(Icons.edit, color: Colors.white),
+                            tooltip: 'Edit name',
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      _userName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    SizedBox(width: 20),
-                    GestureDetector(
-                      onTap: _showEditNameDialog,
-                      child: const Icon(
-                        Icons.edit,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
+                const Divider(color: Color(0xFF2C2C2C), height: 1),
+                _DrawerActionTile(
+                  icon: Icons.share,
+                  title: 'Share',
+                  onTap: () => _showDrawerSnack('Share option coming soon'),
+                ),
+                _DrawerActionTile(
+                  icon: Icons.star_rate,
+                  title: 'Rate Us',
+                  onTap: () => _showDrawerSnack('Rate us option coming soon'),
+                ),
+                _DrawerActionTile(
+                  icon: Icons.info_outline,
+                  title: 'About',
+                  onTap: _showAboutDialog,
                 ),
               ],
             ),
           ),
         ),
-        body: IndexedStack(
-          index: currentIndex.index,
-          children: pages,
-        ),
+        body: IndexedStack(index: currentIndex.index, children: pages),
         bottomNavigationBar: SafeArea(
           child: MyBottomNavigationBar(
             currentIndex: currentIndex,
@@ -208,18 +250,44 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-enum Menus 
-{
-  home,
-  addzone,
-  favorite,
+enum Menus { home, addzone, favorite }
+
+class _DrawerActionTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+
+  const _DrawerActionTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: Colors.orangeAccent),
+      title: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
 }
 
 class MyBottomNavigationBar extends StatelessWidget {
   final Menus currentIndex;
   final ValueChanged<Menus> onTap;
-  const MyBottomNavigationBar(
-      {super.key, required this.currentIndex, required this.onTap});
+  const MyBottomNavigationBar({
+    super.key,
+    required this.currentIndex,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -236,8 +304,9 @@ class MyBottomNavigationBar extends StatelessWidget {
               decoration: BoxDecoration(
                 color: Colors.black,
                 borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(24),
-                    topRight: Radius.circular(24)),
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
+                ),
               ),
               child: Row(
                 children: [
@@ -289,7 +358,7 @@ class MyBottomNavigationBar extends StatelessWidget {
                       color: Colors.black26,
                       blurRadius: 8,
                       offset: Offset(0, 4),
-                    )
+                    ),
                   ],
                 ),
                 child: Icon(
