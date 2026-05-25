@@ -42,7 +42,6 @@ class _AddZonePageState extends State<AddZonePage>
   @override
   void initState() {
     super.initState();
-    Future.microtask(stopBackgroundService);
   }
 
   @override
@@ -51,6 +50,7 @@ class _AddZonePageState extends State<AddZonePage>
     _sliderTimer?.cancel(); // ✅ ADD THIS
     _liveLocationSub?.cancel();
     _mapAnimationController?.dispose();
+    Future.microtask(syncBackgroundServiceWithZones);
     super.dispose();
   }
 
@@ -141,12 +141,12 @@ class _AddZonePageState extends State<AddZonePage>
               elevation: 6,
               borderRadius: BorderRadius.circular(12),
               child: TextField(
-                style: TextStyle(color: Colors.white, fontSize: 16),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
                 controller: _searchController,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
                   hintText: "Search location here",
-                  hintStyle: TextStyle(color: Colors.white),
+                  hintStyle: const TextStyle(color: Colors.white),
                   prefixIcon: const Icon(
                     Icons.search,
                     color: Colors.orangeAccent,
@@ -181,7 +181,8 @@ class _AddZonePageState extends State<AddZonePage>
     try {
       _showSnack("Searching...");
 
-      final osmResults = await _searchWithOpenStreetMap(query);
+      final osmResults = await _getSearchResults(query);
+
       if (osmResults.isNotEmpty) {
         if (osmResults.length == 1) {
           _applySearchedLocation(
@@ -194,34 +195,33 @@ class _AddZonePageState extends State<AddZonePage>
         return;
       }
 
-      _showSnack("Town location not found");
+      _showSnack("Location not found");
     } catch (e) {
       print("SEARCH ERROR: $e");
       _showSnack("Search failed");
     }
   }
 
+  Future<List<_SearchResult>> _getSearchResults(String query) async {
+    final osmResults = await _searchWithOpenStreetMap(query);
+    if (osmResults.isNotEmpty) return osmResults;
+
+    return _searchWithPlatformGeocoder(query);
+  }
+
   Future<List<_SearchResult>> _searchWithOpenStreetMap(String query) async {
     final trimmedQuery = query.trim();
     if (trimmedQuery.isEmpty) return [];
 
-    final anchor = _isMapReady ? _mapController.camera.center : selectedPoint;
     final queryParams = <String, String>{
       'format': 'jsonv2',
       'q': trimmedQuery,
-      'limit': '10',
+      'limit': '30',
       'addressdetails': '1',
-      'countrycodes': 'in',
+      'namedetails': '1',
+      'extratags': '1',
       'dedupe': '1',
     };
-
-    if (anchor != null) {
-      const delta = 0.7;
-      queryParams['viewbox'] =
-          '${anchor.longitude - delta},${anchor.latitude + delta},'
-          '${anchor.longitude + delta},${anchor.latitude - delta}';
-      queryParams['bounded'] = '0';
-    }
 
     final uri = Uri.https(
       'nominatim.openstreetmap.org',
@@ -245,6 +245,7 @@ class _AddZonePageState extends State<AddZonePage>
     if (decoded is! List || decoded.isEmpty) return [];
 
     final queryTokens = trimmedQuery.toLowerCase().split(RegExp(r'\s+'));
+    final normalizedQuery = _normalizeSearchText(trimmedQuery);
     final results = <_SearchResult>[];
 
     for (final item in decoded) {
@@ -259,79 +260,139 @@ class _AddZonePageState extends State<AddZonePage>
           .toString()
           .toLowerCase();
       final type = (item['type'] ?? '').toString().toLowerCase();
-      const placeTypes = {
-        'city',
-        'town',
-        'village',
-        'hamlet',
-        'suburb',
-        'neighbourhood',
-        'locality',
-        'quarter',
-      };
-      const amenityTypes = {
-        'college',
-        'university',
-        'school',
-        'hospital',
-        'clinic',
-      };
-      const businessCategories = {'shop', 'office', 'craft'};
-      const businessTypes = {
-        'company',
-        'industrial',
-        'factory',
-        'works',
-        'warehouse',
-      };
-      final isPlace = category == 'place' && placeTypes.contains(type);
-      final isAmenity = category == 'amenity' && amenityTypes.contains(type);
-      final isBusiness =
-          businessCategories.contains(category) || businessTypes.contains(type);
-      final isBuilding = category == 'building' && type != 'residential';
+      final addresstype = (item['addresstype'] ?? '').toString().toLowerCase();
+      final name = _bestSearchName(item, displayName);
+      final normalizedName = _normalizeSearchText(name);
+      final normalizedDisplay = _normalizeSearchText(displayName);
 
-      if (category == 'boundary' || type == 'administrative') continue;
-      if (!isPlace && !isAmenity && !isBusiness && !isBuilding) continue;
+      if (_isAdministrativeBoundary(category, type, addresstype)) continue;
 
       final importance =
           double.tryParse(item['importance']?.toString() ?? '') ?? 0;
       final lowerName = displayName.toLowerCase();
 
       var score = importance * 100;
+      if (normalizedName == normalizedQuery) {
+        score += 220;
+      } else if (normalizedName.startsWith(normalizedQuery)) {
+        score += 150;
+      } else if (normalizedDisplay.contains(normalizedQuery)) {
+        score += 100;
+      }
+
       for (final token in queryTokens) {
         if (token.isNotEmpty && lowerName.contains(token)) score += 15;
       }
 
-      if (isAmenity || isBusiness || isBuilding) {
+      if (_isPrecisePlace(category, type)) {
+        score += 45;
+      } else if (category == 'place') {
         score += 35;
-      }
-      if (isPlace) {
-        score += 25;
-      }
-      if (type == 'university' || type == 'college' || type == 'hospital') {
-        score += 20;
       }
 
       final latLng = LatLng(lat, lon);
-      if (anchor != null) {
-        final distanceKm =
-            Geolocator.distanceBetween(
-              anchor.latitude,
-              anchor.longitude,
-              lat,
-              lon,
-            ) /
-            1000;
-        score += (80 - distanceKm).clamp(-80, 80);
-      }
 
       results.add(
-        _SearchResult(latLng: latLng, displayName: displayName, score: score),
+        _SearchResult(
+          latLng: latLng,
+          displayName: displayName,
+          name: name,
+          score: score,
+          category: category,
+          type: type,
+        ),
       );
     }
 
     results.sort((a, b) => b.score.compareTo(a.score));
-    return results.take(6).toList();
+    return results.take(8).toList();
+  }
+
+  Future<List<_SearchResult>> _searchWithPlatformGeocoder(String query) async {
+    try {
+      final locations = await locationFromAddress(query);
+      return locations
+          .map(
+            (location) => _SearchResult(
+              latLng: LatLng(location.latitude, location.longitude),
+              displayName: query,
+              name: query,
+              score: 0,
+              category: 'geocoder',
+              type: 'location',
+            ),
+          )
+          .take(3)
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  bool _isAdministrativeBoundary(
+    String category,
+    String type,
+    String addresstype,
+  ) {
+    return category == 'boundary' ||
+        type == 'administrative' ||
+        addresstype == 'boundary';
+  }
+
+  bool _isPrecisePlace(String category, String type) {
+    return category == 'amenity' ||
+        category == 'shop' ||
+        category == 'office' ||
+        category == 'craft' ||
+        category == 'building' ||
+        category == 'tourism' ||
+        category == 'leisure' ||
+        category == 'railway' ||
+        category == 'aeroway' ||
+        category == 'public_transport' ||
+        category == 'healthcare' ||
+        category == 'industrial' ||
+        {
+          'college',
+          'university',
+          'school',
+          'hospital',
+          'factory',
+          'industrial',
+          'company',
+          'warehouse',
+          'town',
+          'village',
+          'city',
+          'locality',
+        }.contains(type);
+  }
+
+  String _bestSearchName(Map<String, dynamic> item, String displayName) {
+    final namedetails = item['namedetails'];
+    if (namedetails is Map) {
+      for (final key in ['name', 'name:en', 'official_name', 'short_name']) {
+        final value = namedetails[key];
+        if (value != null && value.toString().trim().isNotEmpty) {
+          return value.toString();
+        }
+      }
+    }
+
+    final name = item['name'];
+    if (name != null && name.toString().trim().isNotEmpty) {
+      return name.toString();
+    }
+
+    return displayName.split(',').first.trim();
+  }
+
+  String _normalizeSearchText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ');
   }
 
   void _showSearchResults(List<_SearchResult> results) {
@@ -875,8 +936,7 @@ class _AddZonePageState extends State<AddZonePage>
                 await box.add(newZone);
                 print(newZone);
 
-                await initializeService();
-                await initBackgroundService();
+                await syncBackgroundServiceWithZones();
                 if (!mounted) return;
 
                 Navigator.of(context).pushAndRemoveUntil(
@@ -898,19 +958,49 @@ class _AddZonePageState extends State<AddZonePage>
 class _SearchResult {
   final LatLng latLng;
   final String displayName;
+  final String name;
   final double score;
+  final String category;
+  final String type;
 
   const _SearchResult({
     required this.latLng,
     required this.displayName,
+    required this.name,
     required this.score,
+    required this.category,
+    required this.type,
   });
 
-  String get primaryName => displayName.split(',').first.trim();
+  String get primaryName =>
+      name.trim().isEmpty ? displayName.split(',').first.trim() : name.trim();
 
   String get secondaryName {
     final parts = displayName.split(',');
     if (parts.length <= 1) return displayName;
     return parts.skip(1).map((part) => part.trim()).join(', ');
+  }
+
+  IconData get icon {
+    if (type == 'college' || type == 'university' || type == 'school') {
+      return Icons.school;
+    }
+    if (type == 'hospital' || category == 'healthcare') {
+      return Icons.local_hospital;
+    }
+    if (category == 'shop') return Icons.storefront;
+    if (category == 'office' ||
+        type == 'company' ||
+        type == 'factory' ||
+        type == 'industrial') {
+      return Icons.business;
+    }
+    if (category == 'railway' ||
+        category == 'aeroway' ||
+        category == 'public_transport') {
+      return Icons.directions_transit;
+    }
+    if (category == 'place') return Icons.location_city;
+    return Icons.place;
   }
 }

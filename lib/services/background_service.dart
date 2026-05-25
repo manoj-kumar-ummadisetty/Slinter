@@ -31,6 +31,33 @@ Future<void> initBackgroundService() async {
   }
 }
 
+bool hasActiveSilentZones() {
+  if (!Hive.isBoxOpen('silentZonesBox')) return false;
+
+  final box = Hive.box('silentZonesBox');
+  return box.values.any((zone) => zone is Map && zone['isActive'] == true);
+}
+
+Future<void> syncBackgroundServiceWithZones() async {
+  final service = FlutterBackgroundService();
+
+  if (hasActiveSilentZones()) {
+    await initializeService();
+
+    if (await service.isRunning()) {
+      service.invoke('refreshZones');
+      return;
+    }
+
+    await service.startService();
+    return;
+  }
+
+  if (await service.isRunning()) {
+    service.invoke('stopService');
+  }
+}
+
 Future<void> stopBackgroundService() async {
   final service = FlutterBackgroundService();
 
@@ -38,8 +65,6 @@ Future<void> stopBackgroundService() async {
     service.invoke('stopService');
   }
 }
-
-bool _isMonitoringStarted = false;
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
@@ -52,15 +77,15 @@ void onStart(ServiceInstance service) async {
     await service.setAsForegroundService();
   }
 
-  if (!_isMonitoringStarted) {
-    _isMonitoringStarted = true;
+  final zoneService = ZoneMonitorService(service: service);
+  await zoneService.startMonitoring();
 
-    final zoneService = ZoneMonitorService(service: service);
-    await zoneService.startMonitoring();
+  service.on('refreshZones').listen((event) {
+    zoneService.refreshMonitoring();
+  });
 
-    service.on('stopService').listen((event) {
-      zoneService.stopMonitoring();
-      service.stopSelf();
-    });
-  }
+  service.on('stopService').listen((event) {
+    zoneService.stopMonitoring();
+    service.stopSelf();
+  });
 }

@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'package:android_intent_plus/flag.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:hive/hive.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:slinter/components/status_bar.dart';
@@ -16,6 +16,28 @@ void openDndSettings() {
     action: 'android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS',
   );
   intent.launch();
+}
+
+Future<void> openSlinterBatterySettings() async {
+  const packageName = 'com.example.slinter';
+
+  const batteryIntent = AndroidIntent(
+    action: 'android.settings.APP_BATTERY_SETTINGS',
+    arguments: {'android.provider.extra.APP_PACKAGE': packageName},
+    flags: [Flag.FLAG_ACTIVITY_NEW_TASK],
+  );
+
+  try {
+    await batteryIntent.launch();
+    return;
+  } catch (_) {
+    const appSettingsIntent = AndroidIntent(
+      action: 'android.settings.APPLICATION_DETAILS_SETTINGS',
+      data: 'package:$packageName',
+      flags: [Flag.FLAG_ACTIVITY_NEW_TASK],
+    );
+    await appSettingsIntent.launch();
+  }
 }
 
 class GetStartedPage extends StatefulWidget {
@@ -77,21 +99,9 @@ class _GetStartedPageState extends State<GetStartedPage> {
     }
   }
 
-  bool _hasActiveZones() {
-    final box = Hive.box('silentZonesBox');
-
-    return box.values.any((zone) {
-      return zone is Map && zone['isActive'] == true;
-    });
-  }
-
   // ===================== MAIN CONTROLLER =====================
   Future<bool> _handleGetStarted(BuildContext context) async {
     // 🔋 Battery optimization
-    if (!await Permission.ignoreBatteryOptimizations.isGranted) {
-      await Permission.ignoreBatteryOptimizations.request();
-    }
-
     // 📍 Step 1: Foreground location
     var fgStatus = await Permission.locationWhenInUse.request();
 
@@ -124,6 +134,13 @@ class _GetStartedPageState extends State<GetStartedPage> {
     final dndGranted = await Permission.accessNotificationPolicy.isGranted;
     if (!dndGranted) {
       _showDndPermissionDialog(context);
+      return false;
+    }
+
+    final backgroundActivityGranted =
+        await Permission.ignoreBatteryOptimizations.isGranted;
+    if (!backgroundActivityGranted) {
+      _showBackgroundActivityDialog(context);
       return false;
     }
 
@@ -210,6 +227,49 @@ class _GetStartedPageState extends State<GetStartedPage> {
             onPressed: () {
               Navigator.pop(context);
               openDndSettings();
+            },
+            child: const Text("Open Settings"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showBackgroundActivityDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C2C),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          "Allow Background Activity",
+          style: TextStyle(
+            color: Colors.orangeAccent,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: const Text(
+          "To keep silent zones working when the app is minimized, closed, or after restart, open Slinter battery settings and set Battery usage to Allow background activity / Unrestricted.",
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              "Cancel",
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              await Permission.ignoreBatteryOptimizations.request();
+              await openSlinterBatterySettings();
             },
             child: const Text("Open Settings"),
           ),
@@ -362,10 +422,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                                 if (!mounted) return;
 
                                 if (canProceed) {
-                                  if (_hasActiveZones()) {
-                                    await initializeService();
-                                    await initBackgroundService();
-                                  }
+                                  await syncBackgroundServiceWithZones();
                                   if (!mounted) return;
 
                                   Navigator.pushReplacement(

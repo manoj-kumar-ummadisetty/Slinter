@@ -17,10 +17,13 @@ class ZoneMonitorService {
   final Map<String, DateTime> _lastTriggerTimes = {};
 
   StreamSubscription<Position>? _positionStream;
+  Timer? _fallbackTimer;
   late Box silentZonesBox;
+  late Box monitorStateBox;
   String? _currentZoneName;
   DateTime? _lastCheckTime;
   bool _notificationsReady = false;
+  bool _isStopping = false;
 
   ZoneMonitorService({required this.service});
 
@@ -30,12 +33,24 @@ class ZoneMonitorService {
     } else {
       silentZonesBox = Hive.box('silentZonesBox');
     }
+
+    if (!Hive.isBoxOpen('zoneMonitorStateBox')) {
+      monitorStateBox = await Hive.openBox('zoneMonitorStateBox');
+    } else {
+      monitorStateBox = Hive.box('zoneMonitorStateBox');
+    }
+
+    final savedZoneName = monitorStateBox.get('currentZoneName');
+    _currentZoneName = savedZoneName is String && savedZoneName.isNotEmpty
+        ? savedZoneName
+        : null;
   }
 
   Future<void> startMonitoring() async {
     await initHive();
     await _initNotifications();
     _lastTriggerTimes.clear();
+    _isStopping = false;
 
     final permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied ||
@@ -43,11 +58,33 @@ class ZoneMonitorService {
       return;
     }
 
+    if (!_hasActiveZones()) {
+      _stopService();
+      return;
+    }
+
+    _startFallbackPolling();
     _startLocationStream();
   }
 
   void stopMonitoring() {
+    _isStopping = true;
     _positionStream?.cancel();
+    _positionStream = null;
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
+  }
+
+  Future<void> refreshMonitoring() async {
+    await initHive();
+
+    if (!_hasActiveZones()) {
+      _stopService();
+      return;
+    }
+
+    _lastCheckTime = null;
+    await _checkCurrentPositionOnce();
   }
 
   Future<void> _initNotifications() async {
@@ -77,6 +114,8 @@ class ZoneMonitorService {
   }
 
   void _startLocationStream() async {
+    if (_isStopping) return;
+
     _positionStream?.cancel();
 
     try {
@@ -93,14 +132,13 @@ class ZoneMonitorService {
         return;
       }
 
-      final position = await Geolocator.getCurrentPosition();
-      await _checkZones(position);
+      await _checkCurrentPositionOnce();
 
       _positionStream =
           Geolocator.getPositionStream(
             locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              distanceFilter: 20,
+              accuracy: LocationAccuracy.medium,
+              distanceFilter: 50,
             ),
           ).listen(
             (position) async {
@@ -108,11 +146,43 @@ class ZoneMonitorService {
             },
             onError: (_) {
               _positionStream?.cancel();
-              Future.delayed(const Duration(seconds: 5), _startLocationStream);
+              if (!_isStopping) {
+                Future.delayed(
+                  const Duration(seconds: 10),
+                  _startLocationStream,
+                );
+              }
             },
           );
     } catch (_) {
-      Future.delayed(const Duration(seconds: 10), _startLocationStream);
+      if (!_isStopping) {
+        Future.delayed(const Duration(seconds: 20), _startLocationStream);
+      }
+    }
+  }
+
+  void _startFallbackPolling() {
+    _fallbackTimer?.cancel();
+    _fallbackTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
+      if (_isStopping) return;
+      await refreshMonitoring();
+    });
+  }
+
+  Future<void> _checkCurrentPositionOnce() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 12),
+        ),
+      );
+      await _checkZones(position);
+    } catch (_) {
+      // The stream or next fallback tick will try again.
     }
   }
 
@@ -128,9 +198,11 @@ class ZoneMonitorService {
     try {
       var currentlyInsideZone = false;
       String? detectedZoneName;
+      var activeZoneCount = 0;
 
       for (final zone in silentZonesBox.values) {
         if (zone is! Map || zone['isActive'] != true) continue;
+        activeZoneCount++;
 
         final latitude = zone['latitude'];
         final longitude = zone['longitude'];
@@ -152,12 +224,25 @@ class ZoneMonitorService {
         }
       }
 
+      if (activeZoneCount == 0) {
+        if (_currentZoneName != null) {
+          await _exitZone(_currentZoneName!);
+          _currentZoneName = null;
+          await monitorStateBox.delete('currentZoneName');
+        }
+        _stopService();
+        return;
+      }
+
       if (currentlyInsideZone && _currentZoneName != detectedZoneName) {
         _currentZoneName = detectedZoneName;
         await _enterZone(_currentZoneName!);
+      } else if (currentlyInsideZone && _currentZoneName == detectedZoneName) {
+        await _ensureSilentMode();
       } else if (!currentlyInsideZone && _currentZoneName != null) {
         await _exitZone(_currentZoneName!);
         _currentZoneName = null;
+        await monitorStateBox.delete('currentZoneName');
       }
     } catch (_) {
       // Keep monitoring alive even if one saved zone has invalid data.
@@ -165,14 +250,16 @@ class ZoneMonitorService {
   }
 
   Future<void> _enterZone(String zoneName) async {
+    await monitorStateBox.put('currentZoneName', zoneName);
+
     if (!_canTrigger('enter_$zoneName')) return;
 
+    await _ensureSilentMode();
     await _showZoneNotification(
       title: 'Entered $zoneName',
       body: 'Phone switched to silent mode',
     );
     await _vibrateIfAvailable();
-    await SoundMode.setSoundMode(RingerModeStatus.silent);
 
     service.invoke('zone_entered', {'zoneName': zoneName});
   }
@@ -180,14 +267,36 @@ class ZoneMonitorService {
   Future<void> _exitZone(String zoneName) async {
     if (!_canTrigger('exit_$zoneName')) return;
 
+    await _ensureRingMode();
     await _showZoneNotification(
       title: 'Exited $zoneName',
       body: 'Phone switched back to ring mode',
     );
     await _vibrateIfAvailable();
-    await SoundMode.setSoundMode(RingerModeStatus.normal);
 
     service.invoke('zone_exited', {'zoneName': zoneName});
+  }
+
+  Future<void> _ensureSilentMode() async {
+    try {
+      final currentMode = await SoundMode.ringerModeStatus;
+      if (currentMode != RingerModeStatus.silent) {
+        await SoundMode.setSoundMode(RingerModeStatus.silent);
+      }
+    } catch (_) {
+      await SoundMode.setSoundMode(RingerModeStatus.silent);
+    }
+  }
+
+  Future<void> _ensureRingMode() async {
+    try {
+      final currentMode = await SoundMode.ringerModeStatus;
+      if (currentMode != RingerModeStatus.normal) {
+        await SoundMode.setSoundMode(RingerModeStatus.normal);
+      }
+    } catch (_) {
+      await SoundMode.setSoundMode(RingerModeStatus.normal);
+    }
   }
 
   Future<void> _showZoneNotification({
@@ -226,5 +335,16 @@ class ZoneMonitorService {
 
     _lastTriggerTimes[key] = now;
     return true;
+  }
+
+  bool _hasActiveZones() {
+    return silentZonesBox.values.any(
+      (zone) => zone is Map && zone['isActive'] == true,
+    );
+  }
+
+  void _stopService() {
+    stopMonitoring();
+    service.stopSelf();
   }
 }

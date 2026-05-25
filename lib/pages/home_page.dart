@@ -3,6 +3,7 @@ import 'package:slinter/pages/BottomNavPages/add_zone_page.dart';
 import 'package:slinter/pages/BottomNavPages/favorite_page.dart';
 import 'package:slinter/pages/BottomNavPages/silent_zones_page.dart';
 import 'package:slinter/pages/get_started_page.dart';
+import 'package:slinter/services/background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class HomePage extends StatefulWidget {
@@ -242,6 +243,9 @@ class _HomePageState extends State<HomePage> {
               setState(() {
                 currentIndex = value;
               });
+              if (value != Menus.addzone) {
+                Future.microtask(syncBackgroundServiceWithZones);
+              }
             },
           ),
         ),

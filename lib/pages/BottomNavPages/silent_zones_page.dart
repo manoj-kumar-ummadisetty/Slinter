@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
-
+import 'package:slinter/services/background_service.dart';
 
 class SilentZonesPage extends StatefulWidget {
   final String userName;
 
-  const SilentZonesPage({
-    super.key,
-    required this.userName,
-  });
+  const SilentZonesPage({super.key, required this.userName});
 
   @override
   State<SilentZonesPage> createState() => _SilentZonesPageState();
@@ -17,16 +14,13 @@ class SilentZonesPage extends StatefulWidget {
 class _SilentZonesPageState extends State<SilentZonesPage> {
   List<Map<String, dynamic>> zones = [];
 
-
-
   @override
   void initState() {
     super.initState();
     loadZones();
   }
 
-  void loadZones() 
-  {
+  void loadZones() {
     final box = Hive.box('silentZonesBox');
     final tempZones = <Map<String, dynamic>>[];
 
@@ -54,22 +48,18 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
     });
   }
 
-
-  void refreshZones() 
-  {
+  void refreshZones() {
     loadZones();
   }
 
-  void _deleteZones(int index) async 
-  {
+  void _deleteZones(int index) async {
     final box = Hive.box('silentZonesBox');
     await box.delete(zones[index]['key']);
     loadZones();
+    await syncBackgroundServiceWithZones();
   }
 
-
-  void _sortZonesFavoritesFirst() 
-  {
+  void _sortZonesFavoritesFirst() {
     zones.sort((a, b) {
       final aFav = a['isFavorite'] == true;
       final bFav = b['isFavorite'] == true;
@@ -77,8 +67,6 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
       return aFav ? -1 : 1;
     });
   }
-
-
 
   void _deleteZone(int index) {
     showDialog(
@@ -161,137 +149,142 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
                         ],
                       ),
                     )
-                  : ListView.builder
-                  (
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: zones.length, // ✅ USE zones
-              itemBuilder: (context, index) {
-                final zone = zones[index]; // ✅ USE zones
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: zones.length, // ✅ USE zones
+                      itemBuilder: (context, index) {
+                        final zone = zones[index]; // ✅ USE zones
 
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(15),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.orangeAccent.withOpacity(0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 3),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Text(
-                                  'Zone Name: ',
-                                  style: TextStyle(color: Colors.white, fontSize: 16),
-                                ),
-                                Expanded
-                                (
-                                  child: Text(
-                                    zone['zoneName'],
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Colors.orangeAccent,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                const Text(
-                                  'Location: ',
-                                  style: TextStyle(color: Colors.white, fontSize: 14),
-                                ),
-                                Expanded(
-                                  child: Text(
-                                    zone['location'],
-                                    style: const TextStyle(
-                                      color: Colors.orangeAccent,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            IconButton
-                            (
-                              onPressed: () async {
-                                setState(() 
-                                {
-                                  zone['isFavorite'] = !zone['isFavorite'];
-                                });
-                                final box = Hive.box('silentZonesBox');
-                                await box.put(zone['key'], zone);
-                                loadZones();
-                              },
-                              icon: Icon(
-                                zone['isFavorite']
-                                    ? Icons.favorite
-                                    : Icons.favorite_border,
-                                color: zone['isFavorite']
-                                    ? Colors.redAccent
-                                    : Colors.white70,
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.black,
+                            borderRadius: BorderRadius.circular(15),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.orangeAccent.withOpacity(0.3),
+                                blurRadius: 6,
+                                offset: const Offset(0, 3),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Column(
-                        children: [
-                          Text(
-                            zone['isActive'] ? "ON" : "OFF",
-                            style: TextStyle(
-                              color: zone['isActive']
-                                  ? Colors.greenAccent
-                                  : Colors.redAccent,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            ],
                           ),
-                          Switch(
-                            value: zone['isActive'],
-                            inactiveThumbColor: Colors.black12,
-                            inactiveTrackColor: Colors.black,
-                            activeColor: Colors.orangeAccent,
-                            onChanged: (value) async 
-                            {
-                              setState(() {
-                                zone['isActive'] = value;
-                              });
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Text(
+                                          'Zone Name: ',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            zone['zoneName'],
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Colors.orangeAccent,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      children: [
+                                        const Text(
+                                          'Location: ',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            zone['location'],
+                                            style: const TextStyle(
+                                              color: Colors.orangeAccent,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    IconButton(
+                                      onPressed: () async {
+                                        setState(() {
+                                          zone['isFavorite'] =
+                                              !zone['isFavorite'];
+                                        });
+                                        final box = Hive.box('silentZonesBox');
+                                        await box.put(zone['key'], zone);
+                                        loadZones();
+                                      },
+                                      icon: Icon(
+                                        zone['isFavorite']
+                                            ? Icons.favorite
+                                            : Icons.favorite_border,
+                                        color: zone['isFavorite']
+                                            ? Colors.redAccent
+                                            : Colors.white70,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Column(
+                                children: [
+                                  Text(
+                                    zone['isActive'] ? "ON" : "OFF",
+                                    style: TextStyle(
+                                      color: zone['isActive']
+                                          ? Colors.greenAccent
+                                          : Colors.redAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Switch(
+                                    value: zone['isActive'],
+                                    inactiveThumbColor: Colors.black12,
+                                    inactiveTrackColor: Colors.black,
+                                    activeColor: Colors.orangeAccent,
+                                    onChanged: (value) async {
+                                      setState(() {
+                                        zone['isActive'] = value;
+                                      });
 
-                              final box = Hive.box('silentZonesBox');
-                              await box.put(zone['key'], zone);
-                            },
+                                      final box = Hive.box('silentZonesBox');
+                                      await box.put(zone['key'], zone);
+                                      await syncBackgroundServiceWithZones();
+                                    },
+                                  ),
+                                  IconButton(
+                                    onPressed: () {
+                                      _deleteZone(index);
+                                    },
+                                    icon: const Icon(
+                                      Icons.delete,
+                                      color: Colors.redAccent,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
-                          IconButton(
-                            onPressed: () 
-                            {
-                              _deleteZone(index);
-                            },
-                            icon: const Icon(Icons.delete, color: Colors.redAccent),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
