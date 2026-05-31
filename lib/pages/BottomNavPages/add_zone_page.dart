@@ -26,6 +26,7 @@ class _AddZonePageState extends State<AddZonePage>
   bool _isMapReady = false;
   bool _isLiveTracking = false;
   bool _hasLiveAddress = false;
+  bool _currentLocationCameraMoveStarted = false;
   Timer? _sliderTimer;
   AnimationController? _mapAnimationController;
   StreamSubscription<Position>? _liveLocationSub;
@@ -581,7 +582,12 @@ class _AddZonePageState extends State<AddZonePage>
     );
   }
 
-  void animatedMapMove(LatLng dest, double destZoom) {
+  Future<void> animatedMapMove(
+    LatLng dest,
+    double destZoom, {
+    Duration duration = const Duration(milliseconds: 1200),
+    Curve curve = Curves.fastOutSlowIn,
+  }) async {
     if (!_isMapReady || !mounted) return;
 
     _mapAnimationController?.dispose();
@@ -601,16 +607,10 @@ class _AddZonePageState extends State<AddZonePage>
       end: destZoom,
     );
 
-    final controller = AnimationController(
-      duration: const Duration(milliseconds: 1200),
-      vsync: this,
-    );
+    final controller = AnimationController(duration: duration, vsync: this);
     _mapAnimationController = controller;
 
-    final animation = CurvedAnimation(
-      parent: controller,
-      curve: Curves.fastOutSlowIn,
-    );
+    final animation = CurvedAnimation(parent: controller, curve: curve);
 
     controller.addListener(() {
       if (!_isMapReady || !mounted) return;
@@ -631,7 +631,37 @@ class _AddZonePageState extends State<AddZonePage>
       }
     });
 
-    controller.forward();
+    await controller.forward();
+  }
+
+  Future<void> _animateCurrentLocationCamera(LatLng destination) async {
+    if (!_isMapReady || !mounted) return;
+
+    final currentZoom = _mapController.camera.zoom;
+    final zoomOut = (currentZoom - 2.5).clamp(5.0, 14.0).toDouble();
+
+    await animatedMapMove(
+      _mapController.camera.center,
+      zoomOut,
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeOutCubic,
+    );
+    if (!mounted) return;
+
+    await animatedMapMove(
+      destination,
+      zoomOut,
+      duration: const Duration(milliseconds: 760),
+      curve: Curves.easeInOutCubic,
+    );
+    if (!mounted) return;
+
+    await animatedMapMove(
+      destination,
+      16,
+      duration: const Duration(milliseconds: 620),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   void safeMapMove(LatLng newLatLng) {
@@ -663,16 +693,13 @@ class _AddZonePageState extends State<AddZonePage>
     _mapController.move(latLng, 16);
   }
 
-  void _placeCurrentLocationMarker(
+  Future<void> _placeCurrentLocationMarker(
     LatLng latLng, {
     bool moveMap = true,
+    bool cinematicMove = false,
     bool updateAddress = false,
-  }) {
+  }) async {
     if (!mounted) return;
-
-    if (moveMap) {
-      _jumpMapTo(latLng);
-    }
 
     setState(() {
       selectedPoint = latLng;
@@ -687,6 +714,14 @@ class _AddZonePageState extends State<AddZonePage>
           ),
         );
     });
+
+    if (moveMap) {
+      if (cinematicMove) {
+        await _animateCurrentLocationCamera(latLng);
+      } else {
+        _jumpMapTo(latLng);
+      }
+    }
 
     if (updateAddress) {
       Future.microtask(() async {
@@ -703,6 +738,7 @@ class _AddZonePageState extends State<AddZonePage>
     _liveLocationSub = null;
     _isLiveTracking = false;
     _hasLiveAddress = false;
+    _currentLocationCameraMoveStarted = false;
   }
 
   Future<bool> _ensureLocationReady() async {
@@ -730,7 +766,9 @@ class _AddZonePageState extends State<AddZonePage>
 
   Future<void> _startLiveLocationStream() async {
     if (_isLiveTracking) {
-      if (selectedPoint != null) _jumpMapTo(selectedPoint!);
+      if (selectedPoint != null) {
+        await _animateCurrentLocationCamera(selectedPoint!);
+      }
       return;
     }
 
@@ -738,11 +776,14 @@ class _AddZonePageState extends State<AddZonePage>
 
     _isLiveTracking = true;
     _hasLiveAddress = false;
+    _currentLocationCameraMoveStarted = false;
 
     final last = await Geolocator.getLastKnownPosition();
     if (last != null) {
-      _placeCurrentLocationMarker(
+      _currentLocationCameraMoveStarted = true;
+      await _placeCurrentLocationMarker(
         LatLng(last.latitude, last.longitude),
+        cinematicMove: true,
         updateAddress: true,
       );
       _hasLiveAddress = true;
@@ -757,11 +798,17 @@ class _AddZonePageState extends State<AddZonePage>
             distanceFilter: 5,
           ),
         ).listen(
-          (position) {
+          (position) async {
             final latLng = LatLng(position.latitude, position.longitude);
             final shouldUpdateAddress = !_hasLiveAddress;
-            _placeCurrentLocationMarker(
+            final shouldAnimateCamera = !_currentLocationCameraMoveStarted;
+            if (shouldAnimateCamera) {
+              _currentLocationCameraMoveStarted = true;
+            }
+
+            await _placeCurrentLocationMarker(
               latLng,
+              cinematicMove: shouldAnimateCamera,
               updateAddress: shouldUpdateAddress,
             );
             if (shouldUpdateAddress) {
