@@ -68,6 +68,17 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
     });
   }
 
+  void _sortZonesWithAnimation() {
+    setState(() {
+      zones.sort((a, b) {
+        final aFav = a['isFavorite'] == true;
+        final bFav = b['isFavorite'] == true;
+        if (aFav == bFav) return 0;
+        return aFav ? -1 : 1;
+      });
+    });
+  }
+
   void _deleteZone(int index) {
     showDialog(
       context: context,
@@ -106,6 +117,15 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
         ],
       ),
     );
+  }
+
+  String _formatRadius(dynamic radius) {
+    final value = radius is num
+        ? radius.toDouble()
+        : double.tryParse('$radius');
+    if (value == null) return 'Unknown';
+
+    return '${value.round()} m';
   }
 
   @override
@@ -155,132 +175,186 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
                       itemBuilder: (context, index) {
                         final zone = zones[index]; // ✅ USE zones
 
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 16),
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.black,
-                            borderRadius: BorderRadius.circular(15),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.orangeAccent.withOpacity(0.3),
-                                blurRadius: 6,
-                                offset: const Offset(0, 3),
+                        return AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 420),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SizeTransition(
+                                sizeFactor: animation,
+                                axisAlignment: -1,
+                                child: child,
                               ),
-                            ],
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        const Text(
-                                          'Zone Name: ',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                        Expanded(
-                                          child: Text(
-                                            zone['zoneName'],
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              color: Colors.orangeAccent,
+                            );
+                          },
+                          child: AnimatedContainer(
+                            key: ValueKey(
+                              '${zone['key']}_${zone['isFavorite']}',
+                            ),
+                            duration: const Duration(milliseconds: 420),
+                            curve: Curves.easeOutCubic,
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.black,
+                              borderRadius: BorderRadius.circular(15),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.orangeAccent.withOpacity(0.3),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Text(
+                                            'Zone Name: ',
+                                            style: TextStyle(
+                                              color: Colors.white,
                                               fontSize: 16,
-                                              fontWeight: FontWeight.bold,
                                             ),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Row(
-                                      children: [
-                                        const Text(
-                                          'Location: ',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 14,
+                                          Expanded(
+                                            child: Text(
+                                              zone['zoneName'],
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Colors.orangeAccent,
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
                                           ),
-                                        ),
-                                        Expanded(
-                                          child: Text(
-                                            zone['location'],
-                                            style: const TextStyle(
-                                              color: Colors.orangeAccent,
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Location: ',
+                                            style: TextStyle(
+                                              color: Colors.white,
                                               fontSize: 14,
-                                              fontWeight: FontWeight.bold,
                                             ),
                                           ),
+                                          Expanded(
+                                            child: Text(
+                                              zone['location'],
+                                              style: const TextStyle(
+                                                color: Colors.orangeAccent,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Radius: ',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                          Expanded(
+                                            child: Text(
+                                              _formatRadius(zone['radius']),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Colors.orangeAccent,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      IconButton(
+                                        onPressed: () async {
+                                          setState(() {
+                                            zone['isFavorite'] =
+                                                !zone['isFavorite'];
+                                          });
+                                          final box = Hive.box(
+                                            'silentZonesBox',
+                                          );
+                                          await box.put(zone['key'], zone);
+                                          Future.delayed(
+                                            const Duration(milliseconds: 160),
+                                            _sortZonesWithAnimation,
+                                          );
+                                        },
+                                        icon: Icon(
+                                          zone['isFavorite']
+                                              ? Icons.favorite
+                                              : Icons.favorite_border,
+                                          color: zone['isFavorite']
+                                              ? Colors.redAccent
+                                              : Colors.white70,
                                         ),
-                                      ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Column(
+                                  children: [
+                                    Text(
+                                      zone['isActive'] ? "ON" : "OFF",
+                                      style: TextStyle(
+                                        color: zone['isActive']
+                                            ? Colors.greenAccent
+                                            : Colors.redAccent,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
-                                    IconButton(
-                                      onPressed: () async {
+                                    Switch(
+                                      value: zone['isActive'],
+                                      inactiveThumbColor: Colors.black12,
+                                      inactiveTrackColor: Colors.black,
+                                      activeColor: Colors.orangeAccent,
+                                      onChanged: (value) async {
                                         setState(() {
-                                          zone['isFavorite'] =
-                                              !zone['isFavorite'];
+                                          zone['isActive'] = value;
                                         });
+
                                         final box = Hive.box('silentZonesBox');
                                         await box.put(zone['key'], zone);
-                                        loadZones();
+                                        await syncBackgroundServiceWithZones();
                                       },
-                                      icon: Icon(
-                                        zone['isFavorite']
-                                            ? Icons.favorite
-                                            : Icons.favorite_border,
-                                        color: zone['isFavorite']
-                                            ? Colors.redAccent
-                                            : Colors.white70,
+                                    ),
+                                    IconButton(
+                                      onPressed: () {
+                                        _deleteZone(index);
+                                      },
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        color: Colors.redAccent,
                                       ),
                                     ),
                                   ],
                                 ),
-                              ),
-                              Column(
-                                children: [
-                                  Text(
-                                    zone['isActive'] ? "ON" : "OFF",
-                                    style: TextStyle(
-                                      color: zone['isActive']
-                                          ? Colors.greenAccent
-                                          : Colors.redAccent,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  Switch(
-                                    value: zone['isActive'],
-                                    inactiveThumbColor: Colors.black12,
-                                    inactiveTrackColor: Colors.black,
-                                    activeColor: Colors.orangeAccent,
-                                    onChanged: (value) async {
-                                      setState(() {
-                                        zone['isActive'] = value;
-                                      });
-
-                                      final box = Hive.box('silentZonesBox');
-                                      await box.put(zone['key'], zone);
-                                      await syncBackgroundServiceWithZones();
-                                    },
-                                  ),
-                                  IconButton(
-                                    onPressed: () {
-                                      _deleteZone(index);
-                                    },
-                                    icon: const Icon(
-                                      Icons.delete,
-                                      color: Colors.redAccent,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       },
