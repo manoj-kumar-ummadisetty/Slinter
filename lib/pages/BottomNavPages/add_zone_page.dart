@@ -31,6 +31,12 @@ class _AddZonePageState extends State<AddZonePage>
   AnimationController? _mapAnimationController;
   StreamSubscription<Position>? _liveLocationSub;
   final MapController _mapController = MapController();
+  late final TileProvider _tileProvider = NetworkTileProvider(
+    cachingProvider: BuiltInMapCachingProvider.getOrCreateInstance(
+      maxCacheSize: 500 * 1024 * 1024,
+      overrideFreshAge: const Duration(days: 14),
+    ),
+  );
   final TextEditingController _searchController = TextEditingController();
 
   List<Marker> markers = [];
@@ -51,6 +57,7 @@ class _AddZonePageState extends State<AddZonePage>
     _sliderTimer?.cancel(); // ✅ ADD THIS
     _liveLocationSub?.cancel();
     _mapAnimationController?.dispose();
+    _tileProvider.dispose();
     Future.microtask(syncBackgroundServiceWithZones);
     super.dispose();
   }
@@ -114,6 +121,9 @@ class _AddZonePageState extends State<AddZonePage>
               TileLayer(
                 urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                 userAgentPackageName: 'com.example.slinter',
+                tileProvider: _tileProvider,
+                keepBuffer: 4,
+                panBuffer: 2,
               ),
               CircleLayer(
                 circles: selectedPoint == null
@@ -451,14 +461,13 @@ class _AddZonePageState extends State<AddZonePage>
     );
   }
 
-  void _applySearchedLocation({
+  Future<void> _applySearchedLocation({
     required LatLng latLng,
     required String locationName,
-  }) {
+  }) async {
     if (!mounted) return;
 
     _stopLiveLocationStream();
-    _jumpMapTo(latLng);
 
     setState(() {
       selectedPoint = latLng;
@@ -475,6 +484,7 @@ class _AddZonePageState extends State<AddZonePage>
         );
     });
 
+    await _animateCurrentLocationCamera(latLng);
     showRadiusSlider();
   }
 
