@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-
 class FavoritePage extends StatelessWidget {
-
-
   const FavoritePage({super.key});
+
+  String _formatRadius(dynamic radius) {
+    final value = radius is num
+        ? radius.toDouble()
+        : double.tryParse('$radius');
+    if (value == null) return 'Unknown';
+
+    return '${value.round()} m';
+  }
 
   @override
   Widget build(BuildContext context) {
     final box = Hive.box('silentZonesBox');
+    final userId = Hive.box('profile').get('userId');
 
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 44, 44, 44),
@@ -32,9 +39,12 @@ class FavoritePage extends StatelessWidget {
                 valueListenable: box.listenable(),
                 builder: (context, Box box, _) {
                   final favList = box.values
-                      .where((value) =>
-                          value is Map &&
-                          value['isFavorite'] == true)
+                      .where(
+                        (value) =>
+                            value is Map &&
+                            value['isFavorite'] == true &&
+                            value['userId'] == userId,
+                      )
                       .map((e) => Map<String, dynamic>.from(e))
                       .toList();
 
@@ -43,8 +53,11 @@ class FavoritePage extends StatelessWidget {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.heart_broken_sharp,
-                              size: 60, color: Colors.white54),
+                          Icon(
+                            Icons.heart_broken_sharp,
+                            size: 60,
+                            color: Colors.white54,
+                          ),
                           SizedBox(height: 12),
                           Text(
                             'No Favourite Zones Found',
@@ -73,7 +86,7 @@ class FavoritePage extends StatelessWidget {
                           borderRadius: BorderRadius.circular(15),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.orangeAccent.withOpacity(0.3),
+                              color: Colors.orangeAccent.withValues(alpha: 0.3),
                               blurRadius: 6,
                               offset: const Offset(0, 3),
                             ),
@@ -90,10 +103,11 @@ class FavoritePage extends StatelessWidget {
                                       const Text(
                                         'Zone Name: ',
                                         style: TextStyle(
-                                            color: Colors.white, fontSize: 16),
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                        ),
                                       ),
-                                      Expanded
-                                      (
+                                      Expanded(
                                         child: Text(
                                           zone['zoneName'],
                                           maxLines: 1,
@@ -109,15 +123,45 @@ class FavoritePage extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 6),
                                   Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       const Text(
                                         'Location: ',
                                         style: TextStyle(
-                                            color: Colors.white, fontSize: 14),
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                        ),
                                       ),
                                       Expanded(
                                         child: Text(
                                           zone['location'],
+                                          style: const TextStyle(
+                                            color: Colors.orangeAccent,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Radius: ',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          _formatRadius(zone['radius']),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
                                             color: Colors.orangeAccent,
                                             fontSize: 14,

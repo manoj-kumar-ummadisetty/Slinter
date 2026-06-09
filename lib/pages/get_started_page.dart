@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:android_intent_plus/flag.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:android_intent_plus/android_intent.dart';
@@ -105,6 +106,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
     // 📍 Step 1: Foreground location
     var fgStatus = await Permission.locationWhenInUse.request();
 
+    if (!context.mounted) return false;
     if (!fgStatus.isGranted) {
       _showLocationPermissionDialog(context);
       return false;
@@ -113,6 +115,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
     // 📍 Step 2: Background location
     var bgStatus = await Permission.locationAlways.request();
 
+    if (!context.mounted) return false;
     if (bgStatus.isPermanentlyDenied) {
       openAppSettings();
       return false;
@@ -125,6 +128,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
 
     // 📡 GPS check
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!context.mounted) return false;
     if (!serviceEnabled) {
       await Geolocator.openLocationSettings();
       return false;
@@ -132,6 +136,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
 
     // 🔕 DND permission
     final dndGranted = await Permission.accessNotificationPolicy.isGranted;
+    if (!context.mounted) return false;
     if (!dndGranted) {
       _showDndPermissionDialog(context);
       return false;
@@ -139,6 +144,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
 
     final backgroundActivityGranted =
         await Permission.ignoreBatteryOptimizations.isGranted;
+    if (!context.mounted) return false;
     if (!backgroundActivityGranted) {
       _showBackgroundActivityDialog(context);
       return false;
@@ -284,8 +290,10 @@ class _GetStartedPageState extends State<GetStartedPage> {
     final size = MediaQuery.of(context).size;
 
     return BlackStatusBar(
-      child: WillPopScope(
-        onWillPop: () async {
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
           final now = DateTime.now();
 
           if (_lastBackPressed == null ||
@@ -308,9 +316,9 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 duration: Duration(seconds: 2),
               ),
             );
-            return false;
+            return;
           }
-          return true; // exits app
+          SystemNavigator.pop();
         },
 
         child: BlackStatusBar(
@@ -330,8 +338,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           colors: [
-                            Colors.black.withOpacity(0.2),
-                            Colors.black.withOpacity(0.7),
+                            Colors.black.withValues(alpha: 0.2),
+                            Colors.black.withValues(alpha: 0.7),
                           ],
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
@@ -419,11 +427,11 @@ class _GetStartedPageState extends State<GetStartedPage> {
                                   context,
                                 );
 
-                                if (!mounted) return;
+                                if (!context.mounted) return;
 
                                 if (canProceed) {
                                   await syncBackgroundServiceWithZones();
-                                  if (!mounted) return;
+                                  if (!context.mounted) return;
 
                                   Navigator.pushReplacement(
                                     context,

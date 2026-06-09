@@ -4,7 +4,6 @@ import 'package:slinter/components/status_bar.dart';
 import 'package:slinter/pages/get_started_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-
 class UserNamePage extends StatefulWidget {
   const UserNamePage({super.key});
 
@@ -35,7 +34,7 @@ class _UserNamePageState extends State<UserNamePage> {
                 fit: BoxFit.cover,
               ),
             ),
-      
+
             Positioned(
               left: 0,
               right: 0,
@@ -55,7 +54,7 @@ class _UserNamePageState extends State<UserNamePage> {
                   child: Column(
                     children: [
                       const SizedBox(height: 10),
-      
+
                       const Text(
                         'Please enter your name to continue',
                         style: TextStyle(
@@ -65,17 +64,15 @@ class _UserNamePageState extends State<UserNamePage> {
                         ),
                         textAlign: TextAlign.center,
                       ),
-      
                       const SizedBox(height: 8),
-      
+
                       const Icon(
                         Icons.person_outline,
                         size: 50,
                         color: Colors.orangeAccent,
                       ),
-      
                       const SizedBox(height: 12),
-      
+
                       TextField(
                         controller: _nameController,
                         style: const TextStyle(color: Colors.white),
@@ -90,9 +87,8 @@ class _UserNamePageState extends State<UserNamePage> {
                           ),
                         ),
                       ),
-      
                       const Spacer(),
-      
+
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
@@ -103,8 +99,7 @@ class _UserNamePageState extends State<UserNamePage> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          onPressed: () async 
-                          {
+                          onPressed: () async {
                             final name = _nameController.text.trim();
                             if (name.isEmpty) return;
 
@@ -117,11 +112,12 @@ class _UserNamePageState extends State<UserNamePage> {
                             String? userId = box.get('userId');
 
                             if (userId == null) {
-                              userId = DateTime.now().millisecondsSinceEpoch.toString();
+                              userId = DateTime.now().millisecondsSinceEpoch
+                                  .toString();
                               await box.put('userId', userId);
                             }
 
-                            print("User ID: $userId");
+                            if (!context.mounted) return;
 
                             Navigator.pushReplacement(
                               context,
@@ -131,7 +127,6 @@ class _UserNamePageState extends State<UserNamePage> {
                             );
                           },
 
-      
                           child: const Text(
                             'Continue',
                             style: TextStyle(

@@ -59,15 +59,6 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
     await syncBackgroundServiceWithZones();
   }
 
-  void _sortZonesFavoritesFirst() {
-    zones.sort((a, b) {
-      final aFav = a['isFavorite'] == true;
-      final bFav = b['isFavorite'] == true;
-      if (aFav == bFav) return 0;
-      return aFav ? -1 : 1;
-    });
-  }
-
   void _sortZonesWithAnimation() {
     setState(() {
       zones.sort((a, b) {
@@ -202,7 +193,9 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
                               borderRadius: BorderRadius.circular(15),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.orangeAccent.withOpacity(0.3),
+                                  color: Colors.orangeAccent.withValues(
+                                    alpha: 0.3,
+                                  ),
                                   blurRadius: 6,
                                   offset: const Offset(0, 3),
                                 ),
@@ -331,7 +324,7 @@ class _SilentZonesPageState extends State<SilentZonesPage> {
                                       value: zone['isActive'],
                                       inactiveThumbColor: Colors.black12,
                                       inactiveTrackColor: Colors.black,
-                                      activeColor: Colors.orangeAccent,
+                                      activeThumbColor: Colors.orangeAccent,
                                       onChanged: (value) async {
                                         setState(() {
                                           zone['isActive'] = value;

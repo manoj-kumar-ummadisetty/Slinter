@@ -133,7 +133,7 @@ class _AddZonePageState extends State<AddZonePage>
                           point: selectedPoint!,
                           radius: radius,
                           useRadiusInMeter: true,
-                          color: Colors.orangeAccent.withOpacity(0.3),
+                          color: Colors.orangeAccent.withValues(alpha: 0.3),
                           borderStrokeWidth: 2,
                           borderColor: Colors.orangeAccent,
                         ),
@@ -207,8 +207,7 @@ class _AddZonePageState extends State<AddZonePage>
       }
 
       _showSnack("Location not found");
-    } catch (e) {
-      print("SEARCH ERROR: $e");
+    } catch (_) {
       _showSnack("Search failed");
     }
   }
@@ -489,7 +488,7 @@ class _AddZonePageState extends State<AddZonePage>
   }
 
   /// Reverse geocoding (UNCHANGED)
-  Map<String, String> _locationCache = {};
+  final Map<String, String> _locationCache = {};
   Future<String> getPlaceName(double lat, double lng) async {
     final key = "$lat,$lng";
 
@@ -674,27 +673,6 @@ class _AddZonePageState extends State<AddZonePage>
     );
   }
 
-  void safeMapMove(LatLng newLatLng) {
-    if (!_isMapReady || !mounted) return;
-
-    if (selectedPoint == null) {
-      animatedMapMove(newLatLng, 16);
-      return;
-    }
-
-    double distance = Geolocator.distanceBetween(
-      selectedPoint!.latitude,
-      selectedPoint!.longitude,
-      newLatLng.latitude,
-      newLatLng.longitude,
-    );
-
-    // ✅ Only move if distance is significant
-    if (distance > 30) {
-      animatedMapMove(newLatLng, 16);
-    }
-  }
-
   void _jumpMapTo(LatLng latLng) {
     if (!_isMapReady || !mounted) return;
 
@@ -854,37 +832,6 @@ class _AddZonePageState extends State<AddZonePage>
       );
   }
 
-  Future<void> _updateMap(Position position) async {
-    final latLng = LatLng(position.latitude, position.longitude);
-
-    safeMapMove(latLng);
-    setState(() {
-      selectedPoint = latLng;
-      markers
-        ..clear()
-        ..add(
-          Marker(
-            point: latLng,
-            width: 60,
-            height: 60,
-            child: const Icon(
-              Icons.location_on,
-              color: Colors.redAccent,
-              size: 28,
-            ),
-          ),
-        );
-    });
-
-    final name = await getPlaceName(position.latitude, position.longitude);
-
-    if (!mounted) return;
-
-    setState(() {
-      placeName = name;
-    });
-  }
-
   void _scheduleRadiusSlider() {
     _sliderTimer?.cancel(); // cancel previous timer
 
@@ -991,10 +938,8 @@ class _AddZonePageState extends State<AddZonePage>
 
                 /// 🔥 SAVE PERMANENTLY
                 await box.add(newZone);
-                print(newZone);
-
                 await syncBackgroundServiceWithZones();
-                if (!mounted) return;
+                if (!context.mounted) return;
 
                 Navigator.of(context).pushAndRemoveUntil(
                   MaterialPageRoute(

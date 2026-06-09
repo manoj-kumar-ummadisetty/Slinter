@@ -16,19 +16,12 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late String _userName;
-  late List<Widget> pages;
-
   Menus currentIndex = Menus.home;
 
   @override
   void initState() {
     super.initState();
     _userName = widget.userName;
-    pages = [
-      SilentZonesPage(userName: _userName),
-      AddZonePage(userName: _userName),
-      FavoritePage(),
-    ];
   }
 
   @override
@@ -41,10 +34,10 @@ class _HomePageState extends State<HomePage> {
 
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF2C2C2C),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
+        title: const Row(
           children: [
             Text('Edit Name', style: TextStyle(color: Colors.orangeAccent)),
             SizedBox(width: 8),
@@ -67,7 +60,7 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text(
               'Cancel',
               style: TextStyle(color: Colors.white70),
@@ -84,11 +77,13 @@ class _HomePageState extends State<HomePage> {
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.setString('userName', newName);
 
+                if (!dialogContext.mounted) return;
                 setState(() {
                   _userName = newName;
                 });
               }
-              Navigator.pop(context);
+              if (!dialogContext.mounted) return;
+              Navigator.pop(dialogContext);
             },
             child: const Text('Save'),
           ),
@@ -128,28 +123,35 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
+    final pages = [
+      SilentZonesPage(userName: _userName),
+      AddZonePage(userName: _userName),
+      const FavoritePage(),
+    ];
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (_) => GetStartedPage(userName: _userName),
           ),
         );
-        return false; // prevents app from closing
       },
       child: Scaffold(
-        backgroundColor: Color.fromARGB(255, 44, 44, 44),
+        backgroundColor: const Color(0xFF2C2C2C),
         appBar: AppBar(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadiusGeometry.only(
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.only(
               bottomLeft: Radius.circular(24),
               bottomRight: Radius.circular(24),
             ),
           ),
           backgroundColor: Colors.black,
           automaticallyImplyLeading: false,
-          title: Text(
+          title: const Text(
             'Slinter',
             style: TextStyle(
               color: Colors.orangeAccent,
@@ -295,8 +297,8 @@ class MyBottomNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 80,
+    return SizedBox(
+      height: 90,
       child: Stack(
         children: [
           Positioned(
@@ -307,7 +309,7 @@ class MyBottomNavigationBar extends StatelessWidget {
               height: 70,
               decoration: BoxDecoration(
                 color: Colors.black,
-                borderRadius: BorderRadius.only(
+                borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(24),
                   topRight: Radius.circular(24),
                 ),
@@ -319,23 +321,23 @@ class MyBottomNavigationBar extends StatelessWidget {
                       onPressed: () {
                         onTap(Menus.home);
                       },
-                      icon: Icon(Icons.home),
+                      icon: const Icon(Icons.home),
                       iconSize: 28,
                       color: currentIndex == Menus.home
-                          ? Colors.orange
+                          ? Colors.orangeAccent
                           : Colors.white,
                     ),
                   ),
-                  Spacer(),
+                  const Spacer(),
                   Expanded(
                     child: IconButton(
                       onPressed: () {
                         onTap(Menus.favorite);
                       },
-                      icon: Icon(Icons.favorite),
+                      icon: const Icon(Icons.favorite),
                       iconSize: 28,
                       color: currentIndex == Menus.favorite
-                          ? Colors.orange
+                          ? Colors.orangeAccent
                           : Colors.white,
                     ),
                   ),
